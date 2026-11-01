@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useInventory } from '../../context/InventoryContext';
 import StatusBadge from '../../components/StatusBadge';
+import ConfirmDialog from '../../components/ConfirmDialog';
 import { EXPIRY_INFO, TYPE_LABEL } from '../../utils/inventory';
 import {
   daysText, daysUntil, expiryStatus, fmtDate, EXPIRING_SOON_DAYS,
@@ -10,6 +11,7 @@ export default function ExpirationMonitoring() {
   const { batches, itemMap, writeOffBatch } = useInventory();
   const [filter, setFilter] = useState('all');
   const [notice, setNotice] = useState(null);
+  const [pending, setPending] = useState(null);
 
   const all = useMemo(
     () =>
@@ -34,16 +36,15 @@ export default function ExpirationMonitoring() {
     .filter((r) => filter === 'all' || r.status === filter)
     .sort((x, y) => x.b.expiry.localeCompare(y.b.expiry));
 
-  const handleWriteOff = (r) => {
-    const msg = `Write off ${r.b.qty} ${r.item.unit} of ${r.item.name} as expired? This will be recorded in the logs.`;
-    if (!window.confirm(msg)) return;
-    setNotice(writeOffBatch(r.b.id));
+  const confirmWriteOff = () => {
+    setNotice(writeOffBatch(pending.b.id));
+    setPending(null);
   };
 
   return (
     <div>
       <div className="page-head">
-        <h2>Expiration Monitoring</h2>
+        <h1>Expiration Monitoring</h1>
         <div className="actions">
           <StatusBadge tone="danger">Expired: {counts.expired}</StatusBadge>
           <StatusBadge tone="warn">Expiring soon: {counts.soon}</StatusBadge>
@@ -107,7 +108,7 @@ export default function ExpirationMonitoring() {
                 </td>
                 <td>
                   {r.status === 'expired' && (
-                    <button className="btn btn-danger btn-sm" onClick={() => handleWriteOff(r)}>
+                    <button className="btn btn-danger btn-sm" onClick={() => setPending(r)}>
                       Write off
                     </button>
                   )}
@@ -117,6 +118,16 @@ export default function ExpirationMonitoring() {
           </tbody>
         </table>
       </div>
+
+      {pending && (
+        <ConfirmDialog
+          title="Write off expired stock?"
+          message={`Write off ${pending.b.qty} ${pending.item.unit} of ${pending.item.name} as expired. This is recorded in the movement logs and cannot be undone.`}
+          confirmLabel="Write off"
+          onConfirm={confirmWriteOff}
+          onCancel={() => setPending(null)}
+        />
+      )}
     </div>
   );
 }

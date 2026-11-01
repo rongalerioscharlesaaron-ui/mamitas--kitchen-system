@@ -35,7 +35,7 @@ export default function InventoryStock() {
   return (
     <div>
       <div className="page-head">
-        <h2>Inventory Stock</h2>
+        <h1>Inventory Stock</h1>
         <div className="actions">
           <button className="btn btn-primary" onClick={() => setModal({ kind: 'add' })}>+ Add Item</button>
           <button className="btn btn-secondary" onClick={() => setModal({ kind: 'stockin' })}>Stock In</button>

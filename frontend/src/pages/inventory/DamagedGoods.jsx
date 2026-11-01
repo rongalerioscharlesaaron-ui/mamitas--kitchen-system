@@ -19,7 +19,7 @@ export default function DamagedGoods() {
   return (
     <div>
       <div className="page-head">
-        <h2>Damaged Goods Monitoring</h2>
+        <h1>Damaged Goods Monitoring</h1>
         <button className="btn btn-danger" onClick={() => setOpen(true)}>
           Record Damaged / Spoiled
         </button>

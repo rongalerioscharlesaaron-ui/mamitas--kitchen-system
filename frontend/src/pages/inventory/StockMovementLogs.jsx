@@ -19,7 +19,7 @@ export default function StockMovementLogs() {
   return (
     <div>
       <div className="page-head">
-        <h2>Stock Movement Logs</h2>
+        <h1>Stock Movement Logs</h1>
       </div>
 
       <div className="toolbar">
