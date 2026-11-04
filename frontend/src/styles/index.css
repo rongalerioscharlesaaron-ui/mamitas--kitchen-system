@@ -228,3 +228,6 @@ a { color: var(--forest); font-weight: 500; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+.section-head { display: flex; align-items: center; gap: 12px; margin: 28px 0 12px; }
+.section-head h2 { margin: 0; font-size: 1.25rem; }
