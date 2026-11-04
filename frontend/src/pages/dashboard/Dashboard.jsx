@@ -55,7 +55,7 @@ function InventoryOverview() {
           value={items.length}
           tone="info"
           to="/inventory"
-          hint={`${ingredients} ingredients · ${items.length - ingredients} food trays`}
+          hint={`${ingredients} ingredients · ${items.length - ingredients} menu items`}
         />
         <StatCard
           label="Low / Out of Stock"

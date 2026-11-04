@@ -1,6 +1,6 @@
 import {
-  LayoutDashboard, ShoppingCart, Boxes, History, CalendarClock,
-  TriangleAlert, UtensilsCrossed, FileText, ShieldCheck,
+  LayoutDashboard, ShoppingCart, Boxes, UtensilsCrossed, History, CalendarClock,
+  TriangleAlert, FileText, ShieldCheck,
 } from 'lucide-react';
 
 export const NAV_GROUPS = [
@@ -20,6 +20,7 @@ export const NAV_GROUPS = [
     title: 'Inventory',
     items: [
       { label: 'Inventory Stock', path: '/inventory', icon: Boxes, end: true, roles: ['kitchen', 'owner'] },
+      { label: 'Menu', path: '/inventory/menu', icon: UtensilsCrossed, roles: ['kitchen', 'owner'] },
       { label: 'Stock Movement Logs', path: '/inventory/movements', icon: History, roles: ['kitchen', 'owner'] },
       { label: 'Expiration Monitoring', path: '/inventory/expiration', icon: CalendarClock, roles: ['kitchen', 'owner'] },
       { label: 'Damaged Goods', path: '/inventory/damaged', icon: TriangleAlert, roles: ['kitchen', 'owner'] },
@@ -28,7 +29,6 @@ export const NAV_GROUPS = [
   {
     title: 'Administration',
     items: [
-      { label: 'Menu and Recipes', path: '/menu', icon: UtensilsCrossed, roles: ['owner'] },
       { label: 'Reports', path: '/reports', icon: FileText, roles: ['owner'] },
       { label: 'Administration', path: '/admin', icon: ShieldCheck, roles: ['owner'] },
     ],

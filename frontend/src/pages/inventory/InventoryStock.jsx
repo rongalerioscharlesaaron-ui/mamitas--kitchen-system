@@ -4,13 +4,14 @@ import StatusBadge from '../../components/StatusBadge';
 import AddItemModal from '../../components/inventory/AddItemModal';
 import StockInModal from '../../components/inventory/StockInModal';
 import RecordLossModal from '../../components/inventory/RecordLossModal';
-import { stockStatus, TYPE_LABEL } from '../../utils/inventory';
+import { stockStatus } from '../../utils/inventory';
 import { fmtDate } from '../../utils/dates';
+
+const INGREDIENT = ['ingredient'];
 
 export default function InventoryStock() {
   const { items, batches, stockByItem } = useInventory();
   const [search, setSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState('all');
   const [modal, setModal] = useState(null); // { kind: 'add' | 'stockin' | 'loss', itemId? }
   const [notice, setNotice] = useState(null);
 
@@ -25,11 +26,8 @@ export default function InventoryStock() {
   }, [batches]);
 
   const rows = items.filter(
-    (i) =>
-      (typeFilter === 'all' || i.type === typeFilter) &&
-      i.name.toLowerCase().includes(search.trim().toLowerCase())
+    (i) => i.type === 'ingredient' && i.name.toLowerCase().includes(search.trim().toLowerCase())
   );
-
   const close = () => setModal(null);
 
   return (
@@ -37,11 +35,12 @@ export default function InventoryStock() {
       <div className="page-head">
         <h1>Inventory Stock</h1>
         <div className="actions">
-          <button className="btn btn-primary" onClick={() => setModal({ kind: 'add' })}>+ Add Item</button>
-          <button className="btn btn-secondary" onClick={() => setModal({ kind: 'stockin' })}>Stock In</button>
-          <button className="btn btn-secondary" onClick={() => setModal({ kind: 'loss' })}>Record Damage</button>
+          <button className="btn btn-primary" onClick={() => setModal({ kind: 'add' })}>+ Add ingredient</button>
+          <button className="btn btn-secondary" onClick={() => setModal({ kind: 'stockin' })}>Stock in</button>
+          <button className="btn btn-secondary" onClick={() => setModal({ kind: 'loss' })}>Record damage</button>
         </div>
       </div>
+      <p className="muted">Raw ingredients and supplies. Foods and food trays are managed in Menu.</p>
 
       {notice && (
         <div className={`notice notice-${notice.ok ? 'ok' : 'error'}`} role="status">
@@ -52,27 +51,22 @@ export default function InventoryStock() {
 
       <div className="toolbar">
         <input
-          type="search" placeholder="Search item" aria-label="Search item"
+          type="search" placeholder="Search ingredient" aria-label="Search ingredient"
           value={search} onChange={(e) => setSearch(e.target.value)}
         />
-        <select aria-label="Filter by type" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-          <option value="all">All types</option>
-          <option value="ingredient">Ingredients</option>
-          <option value="food_tray">Food Trays</option>
-        </select>
       </div>
 
       <div className="table-wrap">
         <table className="table">
           <thead>
             <tr>
-              <th>Item</th><th>Type</th><th className="num">In stock</th>
-              <th className="num">Low-stock level</th><th>Status</th><th>Next expiry</th><th>Actions</th>
+              <th>Ingredient</th><th className="num">In stock</th><th className="num">Low-stock level</th>
+              <th>Status</th><th>Next expiry</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
-              <tr><td colSpan="7" className="empty">No items found.</td></tr>
+              <tr><td colSpan="6" className="empty">No ingredients found.</td></tr>
             )}
             {rows.map((i) => {
               const stock = stockByItem[i.id] || 0;
@@ -80,14 +74,13 @@ export default function InventoryStock() {
               return (
                 <tr key={i.id}>
                   <td>{i.name}</td>
-                  <td>{TYPE_LABEL[i.type]}</td>
                   <td className="num">{stock} {i.unit}</td>
                   <td className="num">{i.minLevel} {i.unit}</td>
                   <td><StatusBadge tone={st.tone}>{st.label}</StatusBadge></td>
                   <td>{fmtDate(nextExpiry[i.id])}</td>
                   <td>
                     <div className="actions">
-                      <button className="btn btn-secondary btn-sm" onClick={() => setModal({ kind: 'stockin', itemId: i.id })}>Stock In</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => setModal({ kind: 'stockin', itemId: i.id })}>Stock in</button>
                       <button className="btn btn-secondary btn-sm" onClick={() => setModal({ kind: 'loss', itemId: i.id })}>Damage</button>
                     </div>
                   </td>
@@ -99,8 +92,12 @@ export default function InventoryStock() {
       </div>
 
       {modal?.kind === 'add' && <AddItemModal onClose={close} onDone={setNotice} />}
-      {modal?.kind === 'stockin' && <StockInModal defaultItemId={modal.itemId} onClose={close} onDone={setNotice} />}
-      {modal?.kind === 'loss' && <RecordLossModal defaultItemId={modal.itemId} onClose={close} onDone={setNotice} />}
+      {modal?.kind === 'stockin' && (
+        <StockInModal types={INGREDIENT} defaultItemId={modal.itemId} onClose={close} onDone={setNotice} />
+      )}
+      {modal?.kind === 'loss' && (
+        <RecordLossModal types={INGREDIENT} defaultItemId={modal.itemId} onClose={close} onDone={setNotice} />
+      )}
     </div>
   );
 }

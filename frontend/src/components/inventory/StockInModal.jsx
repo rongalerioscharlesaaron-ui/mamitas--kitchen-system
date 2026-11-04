@@ -3,12 +3,14 @@ import Modal from '../Modal';
 import { useInventory } from '../../context/InventoryContext';
 import { todayStr } from '../../utils/dates';
 
-export default function StockInModal({ defaultItemId = '', onClose, onDone }) {
+export default function StockInModal({ defaultItemId = '', types = null, onClose, onDone }) {
   const { items, stockByItem, addStock } = useInventory();
   const [form, setForm] = useState({ itemId: defaultItemId, qty: '', expiry: '' });
   const [error, setError] = useState('');
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const options = types ? items.filter((i) => types.includes(i.type)) : items;
   const item = items.find((i) => i.id === form.itemId);
+  const whole = item && item.type !== 'ingredient';
 
   const submit = (e) => {
     e.preventDefault();
@@ -25,7 +27,7 @@ export default function StockInModal({ defaultItemId = '', onClose, onDone }) {
           <label htmlFor="si-item">Item</label>
           <select id="si-item" value={form.itemId} onChange={set('itemId')}>
             <option value="">Select item</option>
-            {items.map((i) => (
+            {options.map((i) => (
               <option key={i.id} value={i.id}>{i.name}</option>
             ))}
           </select>
@@ -33,7 +35,10 @@ export default function StockInModal({ defaultItemId = '', onClose, onDone }) {
         </div>
         <div className="field">
           <label htmlFor="si-qty">Quantity received {item ? `(${item.unit})` : ''}</label>
-          <input id="si-qty" type="number" min="0" step="any" value={form.qty} onChange={set('qty')} />
+          <input
+            id="si-qty" type="number" min="0" step={whole ? '1' : 'any'}
+            value={form.qty} onChange={set('qty')}
+          />
         </div>
         <div className="field">
           <label htmlFor="si-exp">Expiry date (optional)</label>
@@ -42,7 +47,7 @@ export default function StockInModal({ defaultItemId = '', onClose, onDone }) {
         {error && <p className="error" role="alert">{error}</p>}
         <div className="form-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary">Save Stock In</button>
+          <button type="submit" className="btn btn-primary">Save stock in</button>
         </div>
       </form>
     </Modal>

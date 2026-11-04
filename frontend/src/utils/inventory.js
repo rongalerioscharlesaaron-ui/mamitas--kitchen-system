@@ -1,4 +1,5 @@
-export const TYPE_LABEL = { ingredient: 'Ingredient', food_tray: 'Food Tray' };
+export const TYPE_LABEL = { ingredient: 'Ingredient', food: 'Food', food_tray: 'Food tray' };
+export const FOOD_CATEGORIES = ['Main dishes', 'Sides', 'Desserts'];
 
 export const MOVE_LABEL = {
   IN: 'Stock In', USED: 'Used', DAMAGED: 'Damaged', SPOILED: 'Spoiled', ADJUSTMENT: 'Adjustment',

@@ -6,10 +6,10 @@ import Dashboard from './pages/dashboard/Dashboard';
 import Orders from './pages/orders/Orders';
 import InventoryLayout from './pages/inventory/InventoryLayout';
 import InventoryStock from './pages/inventory/InventoryStock';
+import MenuStock from './pages/inventory/MenuStock';
 import StockMovementLogs from './pages/inventory/StockMovementLogs';
 import ExpirationMonitoring from './pages/inventory/ExpirationMonitoring';
 import DamagedGoods from './pages/inventory/DamagedGoods';
-import MenuPage from './pages/menu/MenuPage';
 import Reports from './pages/reports/Reports';
 import Admin from './pages/admin/Admin';
 
@@ -29,6 +29,7 @@ export default function App() {
           <Route element={<ProtectedRoute roles={['kitchen', 'owner']} />}>
             <Route path="inventory" element={<InventoryLayout />}>
               <Route index element={<InventoryStock />} />
+              <Route path="menu" element={<MenuStock />} />
               <Route path="movements" element={<StockMovementLogs />} />
               <Route path="expiration" element={<ExpirationMonitoring />} />
               <Route path="damaged" element={<DamagedGoods />} />
@@ -36,7 +37,6 @@ export default function App() {
           </Route>
 
           <Route element={<ProtectedRoute roles={['owner']} />}>
-            <Route path="menu" element={<MenuPage />} />
             <Route path="reports" element={<Reports />} />
             <Route path="admin" element={<Admin />} />
           </Route>

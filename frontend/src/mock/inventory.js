@@ -8,14 +8,22 @@ const ago = (days, hour = 9) => {
 };
 
 export const SEED_ITEMS = [
+  // Ingredients
   { id: 'i1', name: 'Rice', type: 'ingredient', unit: 'kg', minLevel: 10 },
   { id: 'i2', name: 'Cooking Oil', type: 'ingredient', unit: 'L', minLevel: 5 },
   { id: 'i3', name: 'Chicken Thigh', type: 'ingredient', unit: 'kg', minLevel: 8 },
   { id: 'i4', name: 'Garlic', type: 'ingredient', unit: 'kg', minLevel: 2 },
   { id: 'i5', name: 'Soy Sauce', type: 'ingredient', unit: 'L', minLevel: 3 },
-  { id: 'i6', name: 'Pork Adobo Tray', type: 'food_tray', unit: 'trays', minLevel: 3 },
-  { id: 'i7', name: 'Pancit Bihon Tray', type: 'food_tray', unit: 'trays', minLevel: 3 },
-  { id: 'i8', name: 'Leche Flan Tray', type: 'food_tray', unit: 'trays', minLevel: 2 },
+  // Food trays (sold per tray)
+  { id: 'i6', name: 'Pork Adobo Tray', type: 'food_tray', unit: 'trays', minLevel: 3, price: 38, category: 'Food trays' },
+  { id: 'i7', name: 'Pancit Bihon Tray', type: 'food_tray', unit: 'trays', minLevel: 3, price: 32, category: 'Food trays' },
+  { id: 'i8', name: 'Leche Flan Tray', type: 'food_tray', unit: 'trays', minLevel: 2, price: 28, category: 'Food trays' },
+  // Foods (sold per serving)
+  { id: 'i9', name: 'Chicken Adobo', type: 'food', unit: 'servings', minLevel: 10, price: 8.5, category: 'Main dishes' },
+  { id: 'i10', name: 'Fried Chicken', type: 'food', unit: 'servings', minLevel: 10, price: 8, category: 'Main dishes' },
+  { id: 'i11', name: 'Pancit Bihon', type: 'food', unit: 'servings', minLevel: 8, price: 7.5, category: 'Main dishes' },
+  { id: 'i12', name: 'Garlic Rice', type: 'food', unit: 'servings', minLevel: 10, price: 2.5, category: 'Sides' },
+  { id: 'i13', name: 'Leche Flan', type: 'food', unit: 'servings', minLevel: 6, price: 3.5, category: 'Desserts' },
 ];
 
 export const SEED_BATCHES = [
@@ -27,6 +35,11 @@ export const SEED_BATCHES = [
   { id: 'b6', itemId: 'i5', qty: 6, received: addDays(-30), expiry: addDays(200) },
   { id: 'b7', itemId: 'i6', qty: 5, received: addDays(-1), expiry: addDays(1) },
   { id: 'b8', itemId: 'i7', qty: 2, received: addDays(-1), expiry: addDays(2) },
+  { id: 'b9', itemId: 'i9', qty: 24, received: addDays(0), expiry: addDays(1) },
+  { id: 'b10', itemId: 'i10', qty: 8, received: addDays(0), expiry: addDays(1) },
+  { id: 'b11', itemId: 'i11', qty: 5, received: addDays(0), expiry: addDays(1) },
+  { id: 'b12', itemId: 'i12', qty: 30, received: addDays(0), expiry: addDays(1) },
+  { id: 'b13', itemId: 'i13', qty: 12, received: addDays(-1), expiry: addDays(3) },
 ];
 
 export const SEED_MOVEMENTS = [
@@ -43,4 +56,11 @@ export const SEED_MOVEMENTS = [
   { id: 'm11', date: ago(10, 9), itemId: 'i1', batchId: 'b1', type: 'IN', qty: 25, reason: 'Stock in', user: 'Kitchen Staff' },
   { id: 'm12', date: ago(20, 9), itemId: 'i2', batchId: 'b2', type: 'IN', qty: 4, reason: 'Stock in', user: 'Kitchen Staff' },
   { id: 'm13', date: ago(30, 9), itemId: 'i5', batchId: 'b6', type: 'IN', qty: 6, reason: 'Stock in', user: 'Kitchen Staff' },
+  { id: 'm14', date: ago(0, 7), itemId: 'i9', batchId: 'b9', type: 'IN', qty: 26, reason: 'Stock in', user: 'Kitchen Staff' },
+  { id: 'm15', date: ago(0, 8), itemId: 'i9', batchId: 'b9', type: 'USED', qty: 2, reason: 'Order #0011', user: 'POS' },
+  { id: 'm16', date: ago(0, 7), itemId: 'i10', batchId: 'b10', type: 'IN', qty: 8, reason: 'Stock in', user: 'Kitchen Staff' },
+  { id: 'm17', date: ago(0, 7), itemId: 'i11', batchId: 'b11', type: 'IN', qty: 5, reason: 'Stock in', user: 'Kitchen Staff' },
+  { id: 'm18', date: ago(0, 7), itemId: 'i12', batchId: 'b12', type: 'IN', qty: 30, reason: 'Stock in', user: 'Kitchen Staff' },
+  { id: 'm19', date: ago(1, 15), itemId: 'i13', batchId: 'b13', type: 'IN', qty: 14, reason: 'Stock in', user: 'Kitchen Staff' },
+  { id: 'm20', date: ago(0, 8), itemId: 'i13', batchId: 'b13', type: 'USED', qty: 2, reason: 'Order #0011', user: 'POS' },
 ];
