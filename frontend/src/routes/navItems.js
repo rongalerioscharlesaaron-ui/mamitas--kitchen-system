@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, ShoppingCart, Boxes, UtensilsCrossed, History, CalendarClock,
+  LayoutDashboard, ShoppingCart, Receipt, Boxes, UtensilsCrossed, History, CalendarClock,
   TriangleAlert, FileText, ShieldCheck,
 } from 'lucide-react';
 
@@ -13,7 +13,8 @@ export const NAV_GROUPS = [
   {
     title: 'Point of sale',
     items: [
-      { label: 'Orders', path: '/orders', icon: ShoppingCart, roles: ['cashier', 'owner'] },
+      { label: 'New Order', path: '/orders', icon: ShoppingCart, end: true, roles: ['cashier', 'owner'] },
+      { label: 'Order History', path: '/orders/history', icon: Receipt, roles: ['cashier', 'owner'] },
     ],
   },
   {

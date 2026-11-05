@@ -319,3 +319,27 @@ a { color: var(--forest); font-weight: 500; }
   .pos { grid-template-columns: 1fr; }
   .order-panel { position: static; max-height: none; }
 }
+
+/* ---------- Receipt and printing ---------- */
+.receipt-sheet {
+  width: 100%; max-width: 340px; margin: 0 auto; padding: 20px 18px; background: #fff; color: #000;
+  border: 1px dashed var(--field-border); border-radius: var(--radius); font-size: 0.9rem; line-height: 1.45;
+}
+.receipt-head { text-align: center; margin-bottom: 12px; }
+.receipt-shop { font-size: 1.15rem; font-weight: 700; }
+.receipt-block { display: grid; gap: 4px; padding: 10px 0; border-top: 1px dashed #999; }
+.receipt-row { display: flex; justify-content: space-between; gap: 12px; }
+.receipt-row span:first-child { flex: 1; }
+.receipt-total { font-size: 1.1rem; font-weight: 700; }
+.receipt-foot { margin-top: 4px; padding-top: 10px; border-top: 1px dashed #999; text-align: center; }
+
+@page { margin: 8mm; }
+@media print {
+  body * { visibility: hidden; }
+  .receipt-sheet, .receipt-sheet * { visibility: visible; }
+  .receipt-sheet {
+    position: absolute; left: 0; top: 0; width: 80mm; max-width: none; margin: 0;
+    border: none; border-radius: 0;
+  }
+  .no-print { display: none !important; }
+}

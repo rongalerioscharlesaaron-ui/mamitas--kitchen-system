@@ -4,6 +4,7 @@ import MainLayout from './layouts/MainLayout';
 import Login from './pages/auth/Login';
 import Dashboard from './pages/dashboard/Dashboard';
 import Orders from './pages/orders/Orders';
+import OrderHistory from './pages/orders/OrderHistory';
 import InventoryLayout from './pages/inventory/InventoryLayout';
 import InventoryStock from './pages/inventory/InventoryStock';
 import MenuStock from './pages/inventory/MenuStock';
@@ -24,6 +25,7 @@ export default function App() {
 
           <Route element={<ProtectedRoute roles={['cashier', 'owner']} />}>
             <Route path="orders" element={<Orders />} />
+            <Route path="orders/history" element={<OrderHistory />} />
           </Route>
 
           <Route element={<ProtectedRoute roles={['kitchen', 'owner']} />}>
