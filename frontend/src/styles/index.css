@@ -343,3 +343,5 @@ a { color: var(--forest); font-weight: 500; }
   }
   .no-print { display: none !important; }
 }
+
+a.btn { text-decoration: none; }
