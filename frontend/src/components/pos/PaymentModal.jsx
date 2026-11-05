@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Modal from '../Modal';
+import ReceiptModal from './ReceiptModal';
 import { useOrders } from '../../context/OrderContext';
 import { ORDER_TYPES, PAYMENT_METHODS } from '../../config/shop';
 import { formatMoney, fromCents, toCents } from '../../utils/money';
@@ -13,6 +14,7 @@ export default function PaymentModal({ onClose, onPlaced }) {
   const [tendered, setTendered] = useState('');
   const [error, setError] = useState('');
   const [placed, setPlaced] = useState(null);
+  const [showReceipt, setShowReceipt] = useState(false);
 
   const total = cartTotals.total;
   const enough = tendered !== '' && toCents(tendered) >= toCents(total);
@@ -32,6 +34,10 @@ export default function PaymentModal({ onClose, onPlaced }) {
     onPlaced(result.order);
   };
 
+  if (placed && showReceipt) {
+    return <ReceiptModal order={placed} closeLabel="Start next order" onClose={onClose} />;
+  }
+
   if (placed) {
     return (
       <Modal title="Order placed" onClose={onClose}>
@@ -43,11 +49,14 @@ export default function PaymentModal({ onClose, onPlaced }) {
               : formatMoney(placed.total)}
           </div>
           <p className="muted" style={{ margin: '8px 0 0' }}>
-            {label(ORDER_TYPES, placed.type)} · {label(PAYMENT_METHODS, placed.payment.method)}
-            {placed.payment.method === 'cash' && ` · Received ${formatMoney(placed.payment.tendered)}`}
+            {label(ORDER_TYPES, placed.type)}, paid by {label(PAYMENT_METHODS, placed.payment.method)}
+            {placed.payment.method === 'cash' && `, received ${formatMoney(placed.payment.tendered)}`}
           </p>
         </div>
         <div className="form-actions">
+          <button type="button" className="btn btn-secondary" onClick={() => setShowReceipt(true)}>
+            View receipt
+          </button>
           <button type="button" className="btn btn-primary" onClick={onClose}>Start next order</button>
         </div>
       </Modal>
@@ -58,7 +67,7 @@ export default function PaymentModal({ onClose, onPlaced }) {
     <Modal title="Payment" onClose={onClose}>
       <form onSubmit={submit}>
         <div className="pay-total">
-          <span>{label(ORDER_TYPES, orderType)} · {cartTotals.count} {cartTotals.count === 1 ? 'item' : 'items'}</span>
+          <span>{label(ORDER_TYPES, orderType)}, {cartTotals.count} {cartTotals.count === 1 ? 'item' : 'items'}</span>
           <strong>{formatMoney(total)}</strong>
         </div>
 
