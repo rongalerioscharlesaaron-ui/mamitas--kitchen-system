@@ -345,3 +345,5 @@ a { color: var(--forest); font-weight: 500; }
 }
 
 a.btn { text-decoration: none; }
+.batch-id { font-weight: 600; white-space: nowrap; color: var(--forest); }
+.info-box { margin-bottom: 14px; padding: 10px 12px; background: var(--cream); border: 1px solid var(--line); border-radius: var(--radius); font-size: 0.9rem; }

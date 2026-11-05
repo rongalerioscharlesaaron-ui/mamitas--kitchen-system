@@ -6,7 +6,7 @@ import { MOVE_LABEL, MOVE_TONE, TYPE_LABEL } from '../../utils/inventory';
 import { fmtDateTime } from '../../utils/dates';
 
 export default function DamagedGoods() {
-  const { movements, itemMap } = useInventory();
+  const { movements, itemMap, batchMap } = useInventory();
   const [type, setType] = useState('all');
   const [open, setOpen] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -21,7 +21,7 @@ export default function DamagedGoods() {
       <div className="page-head">
         <h1>Damaged Goods Monitoring</h1>
         <button className="btn btn-danger" onClick={() => setOpen(true)}>
-          Record Damaged / Spoiled
+          Record damaged or spoiled
         </button>
       </div>
 
@@ -42,11 +42,7 @@ export default function DamagedGoods() {
       )}
 
       <div className="toolbar">
-        <select
-          aria-label="Filter by label"
-          value={type}
-          onChange={(e) => setType(e.target.value)}
-        >
+        <select aria-label="Filter by label" value={type} onChange={(e) => setType(e.target.value)}>
           <option value="all">Damaged and spoiled</option>
           <option value="DAMAGED">Damaged only</option>
           <option value="SPOILED">Spoiled only</option>
@@ -59,6 +55,7 @@ export default function DamagedGoods() {
             <tr>
               <th>Date and time</th>
               <th>Item</th>
+              <th>Batch ID</th>
               <th>Type</th>
               <th>Label</th>
               <th className="num">Quantity</th>
@@ -68,7 +65,7 @@ export default function DamagedGoods() {
           </thead>
           <tbody>
             {rows.length === 0 && (
-              <tr><td colSpan="7" className="empty">No damaged or spoiled goods recorded.</td></tr>
+              <tr><td colSpan="8" className="empty">No damaged or spoiled goods recorded.</td></tr>
             )}
             {rows.map((m) => {
               const item = itemMap[m.itemId];
@@ -76,7 +73,8 @@ export default function DamagedGoods() {
                 <tr key={m.id}>
                   <td>{fmtDateTime(m.date)}</td>
                   <td>{item?.name ?? 'Unknown'}</td>
-                  <td>{item ? TYPE_LABEL[item.type] : '—'}</td>
+                  <td className="batch-id">{batchMap[m.batchId]?.code ?? 'None'}</td>
+                  <td>{item ? TYPE_LABEL[item.type] : 'None'}</td>
                   <td><StatusBadge tone={MOVE_TONE[m.type]}>{MOVE_LABEL[m.type]}</StatusBadge></td>
                   <td className="num">{m.qty} {item?.unit}</td>
                   <td>{m.reason}</td>
