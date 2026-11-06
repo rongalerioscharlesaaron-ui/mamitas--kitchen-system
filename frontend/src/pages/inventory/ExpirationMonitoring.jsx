@@ -7,6 +7,62 @@ import {
   daysText, daysUntil, expiryStatus, fmtDate, EXPIRING_SOON_DAYS,
 } from '../../utils/dates';
 
+function ExpiryTable({ title, kindLabel, kindOf, rows, all, onWriteOff, emptyText }) {
+  const expired = all.filter((r) => r.status === 'expired').length;
+  const soon = all.filter((r) => r.status === 'soon').length;
+
+  return (
+    <section>
+      <div className="section-head">
+        <h2>{title}</h2>
+        <StatusBadge tone="danger">Expired: {expired}</StatusBadge>
+        <StatusBadge tone="warn">Expiring soon: {soon}</StatusBadge>
+      </div>
+      <div className="table-wrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Batch ID</th>
+              <th>Item</th>
+              <th>{kindLabel}</th>
+              <th>Received</th>
+              <th className="num">Qty left</th>
+              <th>Expiry date</th>
+              <th>Time left</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr><td colSpan="9" className="empty">{emptyText}</td></tr>
+            )}
+            {rows.map((r) => (
+              <tr key={r.b.id}>
+                <td className="batch-id">{r.b.code}</td>
+                <td>{r.item.name}</td>
+                <td>{kindOf(r.item)}</td>
+                <td>{fmtDate(r.b.received)}</td>
+                <td className="num">{r.b.qty} {r.item.unit}</td>
+                <td>{fmtDate(r.b.expiry)}</td>
+                <td>{daysText(r.days)}</td>
+                <td>
+                  <StatusBadge tone={EXPIRY_INFO[r.status].tone}>{EXPIRY_INFO[r.status].label}</StatusBadge>
+                </td>
+                <td>
+                  {r.status === 'expired' && (
+                    <button className="btn btn-danger btn-sm" onClick={() => onWriteOff(r)}>Write off</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 export default function ExpirationMonitoring() {
   const { batches, itemMap, writeOffBatch } = useInventory();
   const [filter, setFilter] = useState('all');
@@ -32,9 +88,12 @@ export default function ExpirationMonitoring() {
     ok: all.filter((r) => r.status === 'ok').length,
   };
 
-  const rows = all
-    .filter((r) => filter === 'all' || r.status === filter)
-    .sort((x, y) => x.b.expiry.localeCompare(y.b.expiry));
+  const inventoryAll = all.filter((r) => r.item.type === 'ingredient');
+  const menuAll = all.filter((r) => r.item.type !== 'ingredient');
+  const show = (list) =>
+    list
+      .filter((r) => filter === 'all' || r.status === filter)
+      .sort((x, y) => x.b.expiry.localeCompare(y.b.expiry));
 
   const confirmWriteOff = () => {
     setNotice(writeOffBatch(pending.b.id));
@@ -52,7 +111,8 @@ export default function ExpirationMonitoring() {
         </div>
       </div>
       <p className="muted">
-        Expiring soon means within {EXPIRING_SOON_DAYS} days. Batches without an expiry date are not listed.
+        Expiring soon means within {EXPIRING_SOON_DAYS} days. Each row is one batch. Batches without an expiry date are
+        not listed.
       </p>
 
       {notice && (
@@ -63,11 +123,7 @@ export default function ExpirationMonitoring() {
       )}
 
       <div className="toolbar">
-        <select
-          aria-label="Filter by expiry status"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        >
+        <select aria-label="Filter by expiry status" value={filter} onChange={(e) => setFilter(e.target.value)}>
           <option value="all">All batches</option>
           <option value="expired">Expired</option>
           <option value="soon">Expiring soon</option>
@@ -75,54 +131,21 @@ export default function ExpirationMonitoring() {
         </select>
       </div>
 
-      <div className="table-wrap">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th>Type</th>
-              <th>Received</th>
-              <th className="num">Qty left</th>
-              <th>Expiry date</th>
-              <th>Time left</th>
-              <th>Status</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
-              <tr><td colSpan="8" className="empty">No batches found.</td></tr>
-            )}
-            {rows.map((r) => (
-              <tr key={r.b.id}>
-                <td>{r.item.name}</td>
-                <td>{TYPE_LABEL[r.item.type]}</td>
-                <td>{fmtDate(r.b.received)}</td>
-                <td className="num">{r.b.qty} {r.item.unit}</td>
-                <td>{fmtDate(r.b.expiry)}</td>
-                <td>{daysText(r.days)}</td>
-                <td>
-                  <StatusBadge tone={EXPIRY_INFO[r.status].tone}>
-                    {EXPIRY_INFO[r.status].label}
-                  </StatusBadge>
-                </td>
-                <td>
-                  {r.status === 'expired' && (
-                    <button className="btn btn-danger btn-sm" onClick={() => setPending(r)}>
-                      Write off
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <ExpiryTable
+        title="Inventory items" kindLabel="Category" kindOf={(i) => i.category}
+        rows={show(inventoryAll)} all={inventoryAll} onWriteOff={setPending}
+        emptyText="No ingredient batches found."
+      />
+      <ExpiryTable
+        title="Menu items" kindLabel="Type" kindOf={(i) => TYPE_LABEL[i.type]}
+        rows={show(menuAll)} all={menuAll} onWriteOff={setPending}
+        emptyText="No menu item batches found."
+      />
 
       {pending && (
         <ConfirmDialog
           title="Write off expired stock?"
-          message={`Write off ${pending.b.qty} ${pending.item.unit} of ${pending.item.name} as expired. This is recorded in the movement logs and cannot be undone.`}
+          message={`Write off ${pending.b.qty} ${pending.item.unit} of ${pending.item.name} (batch ${pending.b.code}) as expired. This is recorded in the movement logs and cannot be undone.`}
           confirmLabel="Write off"
           onConfirm={confirmWriteOff}
           onCancel={() => setPending(null)}

@@ -4,15 +4,77 @@ import StatusBadge from '../../components/StatusBadge';
 import AddItemModal from '../../components/inventory/AddItemModal';
 import StockInModal from '../../components/inventory/StockInModal';
 import RecordLossModal from '../../components/inventory/RecordLossModal';
-import { stockStatus } from '../../utils/inventory';
+import { INGREDIENT_CATEGORIES, stockStatus } from '../../utils/inventory';
 import { fmtDate } from '../../utils/dates';
 
 const INGREDIENT = ['ingredient'];
 
+function IngredientTable({ title, rows, batches, stockByItem, nextExpiry, onAction }) {
+  return (
+    <section>
+      <div className="section-head">
+        <h2>{title}</h2>
+        <StatusBadge tone="muted">{rows.length}</StatusBadge>
+      </div>
+      <div className="table-wrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Ingredient</th>
+              <th className="num">In stock</th>
+              <th className="num">Low-stock level</th>
+              <th>Status</th>
+              <th className="num">Batches</th>
+              <th>Next expiry</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr><td colSpan="7" className="empty">No ingredients found.</td></tr>
+            )}
+            {rows.map((i) => {
+              const stock = stockByItem[i.id] || 0;
+              const st = stockStatus(stock, i.minLevel);
+              const count = batches.filter((b) => b.itemId === i.id && b.qty > 0).length;
+              return (
+                <tr key={i.id}>
+                  <td>{i.name}</td>
+                  <td className="num">{stock} {i.unit}</td>
+                  <td className="num">{i.minLevel} {i.unit}</td>
+                  <td><StatusBadge tone={st.tone}>{st.label}</StatusBadge></td>
+                  <td className="num">{count}</td>
+                  <td>{i.hasExpiry ? fmtDate(nextExpiry[i.id]) : 'No expiry'}</td>
+                  <td>
+                    <div className="actions">
+                      {i.hasExpiry ? (
+                        <button className="btn btn-secondary btn-sm" onClick={() => onAction('addbatch', i)}>
+                          Add batch
+                        </button>
+                      ) : (
+                        <button className="btn btn-secondary btn-sm" onClick={() => onAction('stockin', i)}>
+                          Stock in
+                        </button>
+                      )}
+                      <button className="btn btn-secondary btn-sm" onClick={() => onAction('loss', i)}>
+                        Damage
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 export default function InventoryStock() {
   const { items, batches, stockByItem } = useInventory();
   const [search, setSearch] = useState('');
-  const [modal, setModal] = useState(null); // { kind: 'add' | 'stockin' | 'loss', itemId? }
+  const [modal, setModal] = useState(null); // { kind: 'add' | 'addbatch' | 'stockin' | 'loss', item? }
   const [notice, setNotice] = useState(null);
 
   const nextExpiry = useMemo(() => {
@@ -25,10 +87,10 @@ export default function InventoryStock() {
     return map;
   }, [batches]);
 
-  const rows = items.filter(
-    (i) => i.type === 'ingredient' && i.name.toLowerCase().includes(search.trim().toLowerCase())
-  );
+  const match = (i) => i.name.toLowerCase().includes(search.trim().toLowerCase());
+  const ingredients = items.filter((i) => i.type === 'ingredient' && match(i));
   const close = () => setModal(null);
+  const onAction = (kind, item) => setModal({ kind, item });
 
   return (
     <div>
@@ -40,7 +102,10 @@ export default function InventoryStock() {
           <button className="btn btn-secondary" onClick={() => setModal({ kind: 'loss' })}>Record damage</button>
         </div>
       </div>
-      <p className="muted">Raw ingredients and supplies. Foods and food trays are managed in Menu.</p>
+      <p className="muted">
+        Ingredients with an expiry date are added as batches through Add ingredient. Stock in is for ingredients
+        without an expiry date. Foods and food trays are managed in Menu.
+      </p>
 
       {notice && (
         <div className={`notice notice-${notice.ok ? 'ok' : 'error'}`} role="status">
@@ -56,47 +121,32 @@ export default function InventoryStock() {
         />
       </div>
 
-      <div className="table-wrap">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Ingredient</th><th className="num">In stock</th><th className="num">Low-stock level</th>
-              <th>Status</th><th>Next expiry</th><th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
-              <tr><td colSpan="6" className="empty">No ingredients found.</td></tr>
-            )}
-            {rows.map((i) => {
-              const stock = stockByItem[i.id] || 0;
-              const st = stockStatus(stock, i.minLevel);
-              return (
-                <tr key={i.id}>
-                  <td>{i.name}</td>
-                  <td className="num">{stock} {i.unit}</td>
-                  <td className="num">{i.minLevel} {i.unit}</td>
-                  <td><StatusBadge tone={st.tone}>{st.label}</StatusBadge></td>
-                  <td>{fmtDate(nextExpiry[i.id])}</td>
-                  <td>
-                    <div className="actions">
-                      <button className="btn btn-secondary btn-sm" onClick={() => setModal({ kind: 'stockin', itemId: i.id })}>Stock in</button>
-                      <button className="btn btn-secondary btn-sm" onClick={() => setModal({ kind: 'loss', itemId: i.id })}>Damage</button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      {INGREDIENT_CATEGORIES.map((cat) => (
+        <IngredientTable
+          key={cat}
+          title={cat}
+          rows={ingredients.filter((i) => i.category === cat)}
+          batches={batches}
+          stockByItem={stockByItem}
+          nextExpiry={nextExpiry}
+          onAction={onAction}
+        />
+      ))}
 
-      {modal?.kind === 'add' && <AddItemModal onClose={close} onDone={setNotice} />}
+      {(modal?.kind === 'add' || modal?.kind === 'addbatch') && (
+        <AddItemModal defaultName={modal.item?.name ?? ''} onClose={close} onDone={setNotice} />
+      )}
       {modal?.kind === 'stockin' && (
-        <StockInModal types={INGREDIENT} defaultItemId={modal.itemId} onClose={close} onDone={setNotice} />
+        <StockInModal
+          types={INGREDIENT} noExpiryOnly defaultItemId={modal.item?.id}
+          onClose={close} onDone={setNotice}
+        />
       )}
       {modal?.kind === 'loss' && (
-        <RecordLossModal types={INGREDIENT} defaultItemId={modal.itemId} onClose={close} onDone={setNotice} />
+        <RecordLossModal
+          types={INGREDIENT} defaultItemId={modal.item?.id}
+          onClose={close} onDone={setNotice}
+        />
       )}
     </div>
   );
