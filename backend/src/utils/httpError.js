@@ -13,3 +13,4 @@ export const unauthorized = (message = 'Please log in.') => new HttpError(401, m
 export const forbidden = (message = 'You do not have permission to do this.') => new HttpError(403, message);
 export const notFound = (message = 'Not found.') => new HttpError(404, message);
 export const conflict = (message) => new HttpError(409, message);
+export const tooMany = (message) => new HttpError(429, message);
