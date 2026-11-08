@@ -9,4 +9,5 @@ BEGIN;
 \ir functions/01_functions_and_triggers.sql
 \ir views/01_views.sql
 \ir security/01_grants.sql
+\ir migrations/001_orders_client_request_id.sql
 COMMIT;

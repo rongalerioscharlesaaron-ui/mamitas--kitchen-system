@@ -9,7 +9,8 @@
     "start": "node src/server.js",
     "user:set": "node scripts/set-user.js",
     "smoke:auth": "node scripts/smoke-auth.js",
-    "smoke:inventory": "node scripts/smoke-inventory.js"
+    "smoke:inventory": "node scripts/smoke-inventory.js",
+    "smoke:orders": "node scripts/smoke-orders.js"
   },
   "keywords": [],
   "author": "",
