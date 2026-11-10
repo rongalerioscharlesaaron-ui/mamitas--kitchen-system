@@ -5,7 +5,7 @@ import { MOVE_LABEL, MOVE_TONE } from '../../utils/inventory';
 import { fmtDateTime } from '../../utils/dates';
 
 export default function StockMovementLogs() {
-  const { movements, itemMap, batchMap } = useInventory();
+  const { movements } = useInventory();
   const [type, setType] = useState('all');
   const [search, setSearch] = useState('');
 
@@ -16,8 +16,8 @@ export default function StockMovementLogs() {
     .filter(
       (m) =>
         !q ||
-        (itemMap[m.itemId]?.name ?? '').toLowerCase().includes(q) ||
-        (batchMap[m.batchId]?.code ?? '').toLowerCase().includes(q)
+        m.itemName.toLowerCase().includes(q) ||
+        (m.batchCode ?? '').toLowerCase().includes(q)
     );
 
   return (
@@ -25,6 +25,7 @@ export default function StockMovementLogs() {
       <div className="page-head">
         <h1>Stock Movement Logs</h1>
       </div>
+      <p className="muted">The latest 500 movements.</p>
 
       <div className="toolbar">
         <input
@@ -56,20 +57,17 @@ export default function StockMovementLogs() {
             {rows.length === 0 && (
               <tr><td colSpan="7" className="empty">No movements found.</td></tr>
             )}
-            {rows.map((m) => {
-              const item = itemMap[m.itemId];
-              return (
-                <tr key={m.id}>
-                  <td>{fmtDateTime(m.date)}</td>
-                  <td>{item?.name ?? 'Unknown'}</td>
-                  <td className="batch-id">{batchMap[m.batchId]?.code ?? 'None'}</td>
-                  <td><StatusBadge tone={MOVE_TONE[m.type]}>{MOVE_LABEL[m.type]}</StatusBadge></td>
-                  <td className="num">{m.type === 'IN' ? '+' : '-'}{m.qty} {item?.unit}</td>
-                  <td>{m.reason}</td>
-                  <td>{m.user}</td>
-                </tr>
-              );
-            })}
+            {rows.map((m) => (
+              <tr key={m.id}>
+                <td>{fmtDateTime(m.date)}</td>
+                <td>{m.itemName}</td>
+                <td className="batch-id">{m.batchCode ?? 'None'}</td>
+                <td><StatusBadge tone={MOVE_TONE[m.type]}>{MOVE_LABEL[m.type]}</StatusBadge></td>
+                <td className="num">{m.type === 'IN' ? '+' : '-'}{m.qty} {m.unit}</td>
+                <td>{m.reason}</td>
+                <td>{m.user}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

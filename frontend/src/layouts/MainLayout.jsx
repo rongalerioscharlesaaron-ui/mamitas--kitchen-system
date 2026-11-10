@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { ChefHat, LogOut, PanelLeft } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useInventory } from '../context/InventoryContext';
 import { NAV_GROUPS, ROLE_LABELS } from '../routes/navItems';
 import NotificationBell from '../components/NotificationBell';
 
 export default function MainLayout() {
   const { user, logout } = useAuth();
+  const inv = useInventory();
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -20,8 +22,8 @@ export default function MainLayout() {
     else setCollapsed((c) => !c);
   };
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate('/login');
   };
 
@@ -92,7 +94,13 @@ export default function MainLayout() {
         </header>
 
         <main className="content">
-          <Outlet />
+          {inv.error && (
+            <div className="notice notice-error" role="alert">
+              <span>{inv.error}</span>
+              <button className="btn btn-secondary btn-sm" onClick={inv.refresh}>Try again</button>
+            </div>
+          )}
+          {inv.ready === false ? <p className="muted">Loading...</p> : <Outlet />}
         </main>
       </div>
     </div>

@@ -95,8 +95,9 @@ export default function ExpirationMonitoring() {
       .filter((r) => filter === 'all' || r.status === filter)
       .sort((x, y) => x.b.expiry.localeCompare(y.b.expiry));
 
-  const confirmWriteOff = () => {
-    setNotice(writeOffBatch(pending.b.id));
+  const confirmWriteOff = async () => {
+    const result = await writeOffBatch(pending.b.id);
+    setNotice(result);
     setPending(null);
   };
 

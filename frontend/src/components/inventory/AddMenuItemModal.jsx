@@ -1,71 +1,56 @@
 import { useState } from 'react';
 import Modal from '../Modal';
+import { useAuth } from '../../context/AuthContext';
 import { useInventory } from '../../context/InventoryContext';
-import { FOOD_CATEGORIES } from '../../utils/inventory';
-import { todayStr } from '../../utils/dates';
 
-export default function AddMenuItemModal({ onClose, onDone }) {
-  const { addItem } = useInventory();
-  const [form, setForm] = useState({
-    type: 'food', name: '', category: FOOD_CATEGORIES[0], price: '', minLevel: '', qty: '', expiry: '',
-  });
+export default function EditMenuItemModal({ item, onClose, onDone }) {
+  const { user } = useAuth();
+  const { updateMenuItem } = useInventory();
+  const isOwner = user?.role === 'owner';
+  const [form, setForm] = useState({ price: String(item.price), minLevel: String(item.minLevel) });
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
-  const unit = form.type === 'food' ? 'servings' : 'trays';
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    const result = addItem({ ...form, unit });
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    const result = await updateMenuItem(item.id, {
+      price: isOwner && Number(form.price) !== Number(item.price) ? form.price : undefined,
+      minLevel: Number(form.minLevel) !== Number(item.minLevel) ? form.minLevel : undefined,
+    });
+    setBusy(false);
     if (!result.ok) return setError(result.message);
     onDone(result);
     onClose();
   };
 
   return (
-    <Modal title="Add menu item" onClose={onClose}>
+    <Modal title={`Edit ${item.name}`} onClose={onClose}>
       <form onSubmit={submit}>
         <div className="field">
-          <label htmlFor="mi-type">Type</label>
-          <select id="mi-type" value={form.type} onChange={set('type')}>
-            <option value="food">Food (sold per serving)</option>
-            <option value="food_tray">Food tray (sold per tray)</option>
-          </select>
+          <label htmlFor="em-price">Price (SGD)</label>
+          <input
+            id="em-price" type="number" min="0" step="0.01" value={form.price}
+            onChange={set('price')} disabled={!isOwner} autoFocus={isOwner}
+          />
+          {!isOwner && <span className="hint">Only the owner can change prices.</span>}
         </div>
         <div className="field">
-          <label htmlFor="mi-name">Name</label>
-          <input id="mi-name" value={form.name} onChange={set('name')} autoFocus />
-        </div>
-        {form.type === 'food' && (
-          <div className="field">
-            <label htmlFor="mi-cat">Category</label>
-            <select id="mi-cat" value={form.category} onChange={set('category')}>
-              {FOOD_CATEGORIES.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-          </div>
-        )}
-        <div className="field">
-          <label htmlFor="mi-price">Price (SGD)</label>
-          <input id="mi-price" type="number" min="0" step="0.01" value={form.price} onChange={set('price')} />
-        </div>
-        <div className="field">
-          <label htmlFor="mi-min">Low-stock level ({unit})</label>
-          <input id="mi-min" type="number" min="0" step="1" value={form.minLevel} onChange={set('minLevel')} />
-          <span className="hint">An alert shows when available {unit} are at or below this number.</span>
-        </div>
-        <div className="field">
-          <label htmlFor="mi-qty">Starting {unit} (optional)</label>
-          <input id="mi-qty" type="number" min="0" step="1" value={form.qty} onChange={set('qty')} />
-        </div>
-        <div className="field">
-          <label htmlFor="mi-exp">Expiry date (optional)</label>
-          <input id="mi-exp" type="date" min={todayStr()} value={form.expiry} onChange={set('expiry')} />
+          <label htmlFor="em-min">Low-stock level ({item.unit})</label>
+          <input
+            id="em-min" type="number" min="0" step="1" value={form.minLevel}
+            onChange={set('minLevel')} autoFocus={!isOwner}
+          />
         </div>
         {error && <p className="error" role="alert">{error}</p>}
         <div className="form-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary">Add menu item</button>
+          <button type="submit" className="btn btn-primary" disabled={busy}>
+            {busy ? 'Saving...' : 'Save changes'}
+          </button>
         </div>
       </form>
     </Modal>

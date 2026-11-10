@@ -17,6 +17,7 @@ export default function AddItemModal({ defaultName = '', onClose, onDone }) {
     expiry: '',
   });
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   const existing = ingredients.find(
@@ -26,9 +27,13 @@ export default function AddItemModal({ defaultName = '', onClose, onDone }) {
   const blocked = Boolean(existing && !existing.hasExpiry);
   const unit = existing ? existing.unit : form.unit.trim();
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    const result = addIngredient({ ...form, hasExpiry: form.hasExpiry === 'yes' });
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    const result = await addIngredient({ ...form, hasExpiry: form.hasExpiry === 'yes' });
+    setBusy(false);
     if (!result.ok) return setError(result.message);
     onDone(result);
     onClose();
@@ -108,8 +113,8 @@ export default function AddItemModal({ defaultName = '', onClose, onDone }) {
         {error && <p className="error" role="alert">{error}</p>}
         <div className="form-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={blocked}>
-            {existing ? 'Add batch' : 'Add ingredient'}
+          <button type="submit" className="btn btn-primary" disabled={blocked || busy}>
+            {busy ? 'Saving...' : existing ? 'Add batch' : 'Add ingredient'}
           </button>
         </div>
       </form>

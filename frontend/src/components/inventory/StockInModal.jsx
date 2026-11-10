@@ -9,6 +9,7 @@ export default function StockInModal({
   const { items, stockByItem, addStock } = useInventory();
   const [form, setForm] = useState({ itemId: defaultItemId, qty: '', expiry: '' });
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   const options = items.filter(
@@ -16,12 +17,16 @@ export default function StockInModal({
       (!types || types.includes(i.type)) &&
       !(noExpiryOnly && i.type === 'ingredient' && i.hasExpiry)
   );
-  const item = items.find((i) => i.id === form.itemId);
+  const item = items.find((i) => i.id === Number(form.itemId));
   const isMenu = item && item.type !== 'ingredient';
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    const result = addStock(form);
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    const result = await addStock({ ...form, itemId: Number(form.itemId) });
+    setBusy(false);
     if (!result.ok) return setError(result.message);
     onDone(result);
     onClose();
@@ -63,7 +68,9 @@ export default function StockInModal({
         {error && <p className="error" role="alert">{error}</p>}
         <div className="form-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary">Save stock in</button>
+          <button type="submit" className="btn btn-primary" disabled={busy}>
+            {busy ? 'Saving...' : 'Save stock in'}
+          </button>
         </div>
       </form>
     </Modal>
