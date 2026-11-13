@@ -3,7 +3,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { oneOf, parseId } from '../utils/validate.js';
 import { audit } from '../utils/audit.js';
 import {
-  listBatches, recordLoss, writeOffBatch, EXPIRY_STATUSES,
+  listBatches, recordLoss, writeOffBatch, adjustBatch, EXPIRY_STATUSES,
 } from '../services/batchService.js';
 
 const router = Router();
@@ -48,6 +48,22 @@ router.post('/:id/write-off', ...staff, async (req, res) => {
     entity: 'batch',
     entityId: req.params.id,
     details: { code: result.batchCode, item: result.itemName, qty: result.qty },
+  });
+  res.json({ result });
+});
+
+// Body: { countedQty, reason }
+router.post('/:id/adjust', ...staff, async (req, res) => {
+  const result = await adjustBatch(req.user, req.params.id, req.body);
+  await audit({
+    ...who(req),
+    action: 'batch.adjusted',
+    entity: 'batch',
+    entityId: req.params.id,
+    details: {
+      code: result.batchCode, item: result.itemName,
+      from: result.from, to: result.to, diff: result.diff, reason: result.reason,
+    },
   });
   res.json({ result });
 });

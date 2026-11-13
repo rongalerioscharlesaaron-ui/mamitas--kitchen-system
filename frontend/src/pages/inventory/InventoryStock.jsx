@@ -4,6 +4,8 @@ import StatusBadge from '../../components/StatusBadge';
 import AddItemModal from '../../components/inventory/AddItemModal';
 import StockInModal from '../../components/inventory/StockInModal';
 import RecordLossModal from '../../components/inventory/RecordLossModal';
+import AdjustStockModal from '../../components/inventory/AdjustStockModal';
+import EditIngredientModal from '../../components/inventory/EditIngredientModal';
 import { INGREDIENT_CATEGORIES, stockStatus } from '../../utils/inventory';
 import { fmtDate } from '../../utils/dates';
 
@@ -56,9 +58,9 @@ function IngredientTable({ title, rows, batches, stockByItem, nextExpiry, onActi
                           Stock in
                         </button>
                       )}
-                      <button className="btn btn-secondary btn-sm" onClick={() => onAction('loss', i)}>
-                        Damage
-                      </button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => onAction('loss', i)}>Damage</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => onAction('adjust', i)}>Adjust</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => onAction('edit', i)}>Edit</button>
                     </div>
                   </td>
                 </tr>
@@ -74,7 +76,7 @@ function IngredientTable({ title, rows, batches, stockByItem, nextExpiry, onActi
 export default function InventoryStock() {
   const { items, batches, stockByItem } = useInventory();
   const [search, setSearch] = useState('');
-  const [modal, setModal] = useState(null); // { kind: 'add' | 'addbatch' | 'stockin' | 'loss', item? }
+  const [modal, setModal] = useState(null); // { kind, item? }
   const [notice, setNotice] = useState(null);
 
   const nextExpiry = useMemo(() => {
@@ -100,11 +102,12 @@ export default function InventoryStock() {
           <button className="btn btn-primary" onClick={() => setModal({ kind: 'add' })}>+ Add ingredient</button>
           <button className="btn btn-secondary" onClick={() => setModal({ kind: 'stockin' })}>Stock in</button>
           <button className="btn btn-secondary" onClick={() => setModal({ kind: 'loss' })}>Record damage</button>
+          <button className="btn btn-secondary" onClick={() => setModal({ kind: 'adjust' })}>Adjust stock</button>
         </div>
       </div>
       <p className="muted">
         Ingredients with an expiry date are added as batches through Add ingredient. Stock in is for ingredients
-        without an expiry date. Foods and food trays are managed in Menu.
+        without an expiry date. After a real count, use Adjust to correct a batch. Foods and food trays are managed in Menu.
       </p>
 
       {notice && (
@@ -147,6 +150,15 @@ export default function InventoryStock() {
           types={INGREDIENT} defaultItemId={modal.item?.id}
           onClose={close} onDone={setNotice}
         />
+      )}
+      {modal?.kind === 'adjust' && (
+        <AdjustStockModal
+          types={INGREDIENT} defaultItemId={modal.item?.id}
+          onClose={close} onDone={setNotice}
+        />
+      )}
+      {modal?.kind === 'edit' && (
+        <EditIngredientModal item={modal.item} onClose={close} onDone={setNotice} />
       )}
     </div>
   );

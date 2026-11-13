@@ -63,7 +63,10 @@ export default function StockMovementLogs() {
                 <td>{m.itemName}</td>
                 <td className="batch-id">{m.batchCode ?? 'None'}</td>
                 <td><StatusBadge tone={MOVE_TONE[m.type]}>{MOVE_LABEL[m.type]}</StatusBadge></td>
-                <td className="num">{m.type === 'IN' ? '+' : '-'}{m.qty} {m.unit}</td>
+                <td className="num">
+                  {m.type === 'IN' || (m.type === 'ADJUSTMENT' && m.qty > 0) ? '+' : m.type === 'ADJUSTMENT' ? '' : '-'}
+                  {m.qty} {m.unit}
+                </td>
                 <td>{m.reason}</td>
                 <td>{m.user}</td>
               </tr>

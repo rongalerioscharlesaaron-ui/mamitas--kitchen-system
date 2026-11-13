@@ -179,3 +179,56 @@ export async function writeOffBatch(user, rawBatchId) {
     };
   });
 }
+
+// Sets a batch to the quantity that was really counted. The difference is logged as a signed Adjustment.
+export async function adjustBatch(user, rawBatchId, body) {
+  const b = body ?? {};
+  const batchId = parseId(rawBatchId, 'batch id');
+  const reason = text(b.reason, 'Reason', { max: 200 });
+
+  return withTransaction(async (db) => {
+    const { rows } = await db.query(
+      `SELECT b.id, b.item_id, b.batch_code, b.qty_remaining, i.name, i.unit, i.item_type
+         FROM inventory_batches b
+         JOIN items i ON i.id = b.item_id
+        WHERE b.id = $1
+          FOR UPDATE OF b`,
+      [batchId]
+    );
+    const batch = rows[0];
+    if (!batch) throw notFound('Batch not found.');
+
+    const counted = number(b.countedQty, 'Counted quantity', {
+      min: 0,
+      max: 1000000,
+      integer: batch.item_type !== 'ingredient',
+    });
+    const diff = Math.round((counted - batch.qty_remaining) * 1000) / 1000;
+    if (diff === 0) {
+      throw badRequest(`Batch ${batch.batch_code} already shows ${counted} ${batch.unit}. Nothing to adjust.`);
+    }
+
+    // If more was counted than was ever received, the received quantity is corrected too
+    await db.query(
+      `UPDATE inventory_batches
+          SET qty_remaining = $2, qty_received = GREATEST(qty_received, $2)
+        WHERE id = $1`,
+      [batchId, counted]
+    );
+    await db.query(
+      `INSERT INTO stock_movements (item_id, batch_id, movement_type, qty, reason, user_id)
+       VALUES ($1, $2, 'ADJUSTMENT', $3, $4, $5)`,
+      [batch.item_id, batchId, diff, reason, user.id]
+    );
+
+    return {
+      batchCode: batch.batch_code,
+      itemName: batch.name,
+      unit: batch.unit,
+      from: batch.qty_remaining,
+      to: counted,
+      diff,
+      reason,
+    };
+  });
+}

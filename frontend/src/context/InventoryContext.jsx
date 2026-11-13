@@ -184,6 +184,16 @@ export function InventoryProvider({ children }) {
       return `${result.qty} ${result.unit} of ${result.itemName} (batch ${result.batchCode}) written off as expired.`;
     });
 
+  // Sets a batch to the quantity that was really counted. The difference is logged as an Adjustment.
+  const adjustBatch = ({ batchId, countedQty, reason }) => {
+    if (!batchId) return Promise.resolve(fail('Choose the batch you counted.'));
+    return run(async () => {
+      const { result } = await api.post(`/batches/${batchId}/adjust`, { countedQty, reason });
+      const sign = result.diff > 0 ? '+' : '';
+      return `Batch ${result.batchCode} of ${result.itemName} is now ${result.to} ${result.unit} (${sign}${result.diff}).`;
+    });
+  };
+
   // The POS is connected in Part C. Until then the old order screen cannot sell.
   const consumeStock = () => ({ ok: false, message: 'The POS is connected in the next stage.' });
 
@@ -192,7 +202,7 @@ export function InventoryProvider({ children }) {
       value={{
         items, batches, movements, stockByItem, usableStockByItem, itemMap, batchMap,
         ready, error, refresh,
-        addIngredient, addItem, updateMenuItem, addStock, recordLoss, writeOffBatch, consumeStock,
+        addIngredient, addItem, updateMenuItem, addStock, recordLoss, writeOffBatch, adjustBatch, consumeStock,
       }}
     >
       {children}
