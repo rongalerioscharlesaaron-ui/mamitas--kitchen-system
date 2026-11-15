@@ -1,47 +1,56 @@
-import { createContext, useContext, useState } from 'react';
-import { USERS } from '../mock/users';
+import { createContext, useContext, useEffect, useState } from 'react';
+import { api, setUnauthorizedHandler } from '../api/client';
 
 const AuthContext = createContext(null);
-const KEY = 'mk_user';
-
-function loadUser() {
-  try {
-    const raw = sessionStorage.getItem(KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(loadUser);
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true); // true while we ask the server who is logged in
 
-  const login = (username, password) => {
-    const found = USERS.find(
-      (u) => u.username === username && u.password === password
-    );
-    if (!found) return { ok: false, message: 'Incorrect username or password.' };
-    const safeUser = { username: found.username, name: found.name, role: found.role };
+  // On page load: does the session cookie still belong to a logged-in user?
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get('/auth/me')
+      .then((data) => {
+        if (!cancelled) setUser(data.user);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // If the server says the session ended, go back to the login page
+  useEffect(() => {
+    setUnauthorizedHandler(() => setUser(null));
+    return () => setUnauthorizedHandler(null);
+  }, []);
+
+  const login = async (username, password) => {
     try {
-      sessionStorage.setItem(KEY, JSON.stringify(safeUser));
-    } catch {
-      /* ignore storage errors */
+      const data = await api.post('/auth/login', { username, password });
+      setUser(data.user);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, message: err.message };
     }
-    setUser(safeUser);
-    return { ok: true };
   };
 
-  const logout = () => {
+  const logout = async () => {
     try {
-      sessionStorage.removeItem(KEY);
+      await api.post('/auth/logout');
     } catch {
-      /* ignore */
+      // even if the server cannot be reached, leave the screen
     }
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,24 +1,31 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { ChefHat } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 export default function Login() {
-  const { login } = useAuth();
-  const navigate = useNavigate();
+  const { user, loading, login } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const handleSubmit = (e) => {
+  if (loading) return <p className="muted" style={{ padding: 24 }}>Loading...</p>;
+  if (user) return <Navigate to="/" replace />;
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    if (busy) return;
     if (!username.trim() || !password) {
       setError('Enter your username and password.');
       return;
     }
-    const result = login(username.trim(), password);
-    if (result.ok) navigate('/', { replace: true });
-    else setError(result.message);
+    setBusy(true);
+    setError('');
+    const result = await login(username.trim(), password);
+    setBusy(false);
+    if (!result.ok) setError(result.message);
+    // on success the page redirects by itself
   };
 
   return (
@@ -58,16 +65,9 @@ export default function Login() {
 
         {error && <p className="error" role="alert">{error}</p>}
 
-        <button className="btn btn-primary" type="submit" style={{ width: '100%' }}>
-          Log in
+        <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: '100%' }}>
+          {busy ? 'Signing in...' : 'Log in'}
         </button>
-
-        <div className="demo-box">
-          <p><strong>Demo accounts (testing only)</strong></p>
-          <p>cashier / cashier123</p>
-          <p>kitchen / kitchen123</p>
-          <p>owner / owner123</p>
-        </div>
       </form>
     </div>
   );

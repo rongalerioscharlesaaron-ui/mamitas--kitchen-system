@@ -1,18 +1,20 @@
-import { SHOP, ORDER_TYPES, PAYMENT_METHODS } from '../../config/shop';
+import { useOrders } from '../../context/OrderContext';
+import { ORDER_TYPES, PAYMENT_METHODS } from '../../config/shop';
 import { fmtDateTime } from '../../utils/dates';
 import { formatMoney } from '../../utils/money';
 
 const label = (list, id) => list.find((x) => x.id === id)?.label ?? id;
 
 export default function Receipt({ order }) {
+  const { shop } = useOrders();
   const { payment } = order;
 
   return (
     <div className="receipt-sheet">
       <div className="receipt-head">
-        <div className="receipt-shop">{SHOP.name}</div>
-        <div>{SHOP.location}</div>
-        {SHOP.gstRegistered && SHOP.gstRegNo && <div>GST Reg. No. {SHOP.gstRegNo}</div>}
+        <div className="receipt-shop">{shop.name}</div>
+        <div>{shop.location}</div>
+        {shop.gstRegistered && shop.gstRegNo && <div>GST Reg. No. {shop.gstRegNo}</div>}
       </div>
 
       <div className="receipt-block">
@@ -32,9 +34,9 @@ export default function Receipt({ order }) {
       </div>
 
       <div className="receipt-block">
-        {SHOP.gstRegistered && order.gst > 0 && (
+        {shop.gstRegistered && order.gst > 0 && (
           <div className="receipt-row">
-            <span>GST included ({Math.round(SHOP.gstRate * 100)}%)</span>
+            <span>GST included ({Math.round(shop.gstRate * 100)}%)</span>
             <span>{formatMoney(order.gst)}</span>
           </div>
         )}

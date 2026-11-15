@@ -14,31 +14,32 @@ export default function RecordLossModal({ defaultItemId = '', types = null, onCl
 
   const batchesOf = (itemId) =>
     batches
-      .filter((b) => b.itemId === itemId && b.qty > 0)
+      .filter((b) => b.itemId === Number(itemId) && b.qty > 0)
       .sort((a, b) => a.code.localeCompare(b.code));
 
   const [form, setForm] = useState(() => {
     const list = defaultItemId ? batchesOf(defaultItemId) : [];
     return {
-      itemId: defaultItemId,
-      batchId: list.length === 1 ? list[0].id : '',
+      itemId: defaultItemId ? String(defaultItemId) : '',
+      batchId: list.length === 1 ? String(list[0].id) : '',
       qty: '',
       type: 'DAMAGED',
       reason: '',
     };
   });
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
-  const item = items.find((i) => i.id === form.itemId);
+  const item = items.find((i) => i.id === Number(form.itemId));
   const list = item ? batchesOf(item.id) : [];
-  const batch = list.find((b) => b.id === form.batchId);
+  const batch = list.find((b) => b.id === Number(form.batchId));
   const whole = item && item.type !== 'ingredient';
 
   const onItem = (e) => {
     const itemId = e.target.value;
-    const options = batchesOf(itemId);
-    setForm({ ...form, itemId, batchId: options.length === 1 ? options[0].id : '', qty: '' });
+    const options = itemId ? batchesOf(itemId) : [];
+    setForm({ ...form, itemId, batchId: options.length === 1 ? String(options[0].id) : '', qty: '' });
   };
 
   const batchLabel = (b) => {
@@ -48,9 +49,17 @@ export default function RecordLossModal({ defaultItemId = '', types = null, onCl
     return `${b.code}, ${b.qty} ${item.unit} left, ${when}`;
   };
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    const result = recordLoss(form);
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    const result = await recordLoss({
+      ...form,
+      itemId: Number(form.itemId) || null,
+      batchId: Number(form.batchId) || null,
+    });
+    setBusy(false);
     if (!result.ok) return setError(result.message);
     onDone(result);
     onClose();
@@ -122,7 +131,9 @@ export default function RecordLossModal({ defaultItemId = '', types = null, onCl
         {error && <p className="error" role="alert">{error}</p>}
         <div className="form-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-danger">Record</button>
+          <button type="submit" className="btn btn-danger" disabled={busy}>
+            {busy ? 'Saving...' : 'Record'}
+          </button>
         </div>
       </form>
     </Modal>

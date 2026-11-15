@@ -1,5 +1,10 @@
 export const TYPE_LABEL = { ingredient: 'Ingredient', food: 'Food', food_tray: 'Food tray' };
-export const FOOD_CATEGORIES = ['Main dishes', 'Sides', 'Desserts'];
+export const FOOD_CATEGORIES = [
+  'Main dishes',
+  'Snacks and appetizers',
+  'Soup and noodle dishes',
+  'Desserts',
+];
 export const INGREDIENT_CATEGORIES = ['Wet ingredients', 'Dry ingredients', 'Meat'];
 
 export const MOVE_LABEL = {

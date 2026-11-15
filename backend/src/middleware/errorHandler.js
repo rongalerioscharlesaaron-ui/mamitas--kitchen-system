@@ -12,7 +12,7 @@ function describe(err) {
 
   switch (err.code) {
     case 'P0001': // raised by our own database rules, e.g. "Not enough Chicken Adobo in stock"
-      return [400, err.message];
+      return [400, err.message.replace(/(\d)\.0+(?!\d)/g, '$1')];
     case '23514': // check violation: our trigger messages are safe, table constraint names are not
       return [400, err.constraint ? 'That value is not allowed.' : err.message];
     case '23505':

@@ -5,6 +5,7 @@ import AddMenuItemModal from '../../components/inventory/AddMenuItemModal';
 import EditMenuItemModal from '../../components/inventory/EditMenuItemModal';
 import StockInModal from '../../components/inventory/StockInModal';
 import RecordLossModal from '../../components/inventory/RecordLossModal';
+import AdjustStockModal from '../../components/inventory/AdjustStockModal';
 import { stockStatus } from '../../utils/inventory';
 import { fmtDate } from '../../utils/dates';
 import { formatMoney } from '../../utils/money';
@@ -54,6 +55,7 @@ function MenuTable({ title, nameLabel, qtyLabel, showCategory, rows, available, 
                         {i.type === 'food' ? 'Add servings' : 'Add trays'}
                       </button>
                       <button className="btn btn-secondary btn-sm" onClick={() => onAction('loss', i)}>Damage</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => onAction('adjust', i)}>Adjust</button>
                       <button className="btn btn-secondary btn-sm" onClick={() => onAction('edit', i)}>Edit</button>
                     </div>
                   </td>
@@ -97,6 +99,7 @@ export default function MenuStock() {
       </div>
       <p className="muted">
         Servings and trays available for sale. Each item sold at the cashier takes one serving or one tray from here.
+        After a real count, use Adjust to correct a batch.
       </p>
 
       {notice && (
@@ -130,6 +133,9 @@ export default function MenuStock() {
       )}
       {modal?.kind === 'loss' && (
         <RecordLossModal types={MENU_TYPES} defaultItemId={modal.item.id} onClose={close} onDone={setNotice} />
+      )}
+      {modal?.kind === 'adjust' && (
+        <AdjustStockModal types={MENU_TYPES} defaultItemId={modal.item.id} onClose={close} onDone={setNotice} />
       )}
       {modal?.kind === 'edit' && <EditMenuItemModal item={modal.item} onClose={close} onDone={setNotice} />}
     </div>

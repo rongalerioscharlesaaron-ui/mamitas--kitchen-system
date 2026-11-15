@@ -6,7 +6,7 @@ import { MOVE_LABEL, MOVE_TONE, TYPE_LABEL } from '../../utils/inventory';
 import { fmtDateTime } from '../../utils/dates';
 
 export default function DamagedGoods() {
-  const { movements, itemMap, batchMap } = useInventory();
+  const { movements } = useInventory();
   const [type, setType] = useState('all');
   const [open, setOpen] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -67,21 +67,18 @@ export default function DamagedGoods() {
             {rows.length === 0 && (
               <tr><td colSpan="8" className="empty">No damaged or spoiled goods recorded.</td></tr>
             )}
-            {rows.map((m) => {
-              const item = itemMap[m.itemId];
-              return (
-                <tr key={m.id}>
-                  <td>{fmtDateTime(m.date)}</td>
-                  <td>{item?.name ?? 'Unknown'}</td>
-                  <td className="batch-id">{batchMap[m.batchId]?.code ?? 'None'}</td>
-                  <td>{item ? TYPE_LABEL[item.type] : 'None'}</td>
-                  <td><StatusBadge tone={MOVE_TONE[m.type]}>{MOVE_LABEL[m.type]}</StatusBadge></td>
-                  <td className="num">{m.qty} {item?.unit}</td>
-                  <td>{m.reason}</td>
-                  <td>{m.user}</td>
-                </tr>
-              );
-            })}
+            {rows.map((m) => (
+              <tr key={m.id}>
+                <td>{fmtDateTime(m.date)}</td>
+                <td>{m.itemName}</td>
+                <td className="batch-id">{m.batchCode ?? 'None'}</td>
+                <td>{TYPE_LABEL[m.itemType]}</td>
+                <td><StatusBadge tone={MOVE_TONE[m.type]}>{MOVE_LABEL[m.type]}</StatusBadge></td>
+                <td className="num">{m.qty} {m.unit}</td>
+                <td>{m.reason}</td>
+                <td>{m.user}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

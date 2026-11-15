@@ -9,4 +9,8 @@ BEGIN;
 \ir functions/01_functions_and_triggers.sql
 \ir views/01_views.sql
 \ir security/01_grants.sql
-COMMIT;
+\ir migrations/001_orders_client_request_id.sql
+\ir migrations/002_allow_adjustment_quantities.sql
+COMMIT;$env:Path += ";C:\Program Files\PostgreSQL\18\bin"
+psql -U postgres -h localhost -d mamitas_kitchen -f database/migrations/002_allow_adjustment_quantities.sql
+psql -U postgres -h localhost -d mamitas_kitchen_test -f database/migrations/002_allow_adjustment_quantities.sql
