@@ -3,12 +3,14 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { ChefHat, LogOut, PanelLeft } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useInventory } from '../context/InventoryContext';
+import { useOrders } from '../context/OrderContext';
 import { NAV_GROUPS, ROLE_LABELS } from '../routes/navItems';
 import NotificationBell from '../components/NotificationBell';
 
 export default function MainLayout() {
   const { user, logout } = useAuth();
   const inv = useInventory();
+  const ord = useOrders();
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -26,6 +28,14 @@ export default function MainLayout() {
     await logout();
     navigate('/login');
   };
+
+  // Cashiers load the menu, kitchen staff load inventory, the owner loads both
+  const retry = () => {
+    if (user.role !== 'cashier') inv.refresh();
+    if (user.role !== 'kitchen') ord.refresh();
+  };
+  const problem = inv.error || ord.error;
+  const loading = inv.ready === false || ord.ready === false;
 
   const initials = user.name
     .split(' ')
@@ -94,13 +104,13 @@ export default function MainLayout() {
         </header>
 
         <main className="content">
-          {inv.error && (
+          {problem && (
             <div className="notice notice-error" role="alert">
-              <span>{inv.error}</span>
-              <button className="btn btn-secondary btn-sm" onClick={inv.refresh}>Try again</button>
+              <span>{problem}</span>
+              <button className="btn btn-secondary btn-sm" onClick={retry}>Try again</button>
             </div>
           )}
-          {inv.ready === false ? <p className="muted">Loading...</p> : <Outlet />}
+          {loading ? <p className="muted">Loading...</p> : <Outlet />}
         </main>
       </div>
     </div>

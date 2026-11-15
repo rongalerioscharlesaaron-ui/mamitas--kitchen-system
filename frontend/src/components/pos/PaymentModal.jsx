@@ -10,24 +10,34 @@ const label = (list, id) => list.find((x) => x.id === id)?.label ?? id;
 
 export default function PaymentModal({ onClose, onPlaced }) {
   const { cartTotals, orderType, placeOrder } = useOrders();
+  // The order is saved when it is placed and the cart is then cleared, so keep what was on screen
+  const [snapshot] = useState(() => ({ total: cartTotals.total, count: cartTotals.count, type: orderType }));
   const [method, setMethod] = useState('cash');
   const [tendered, setTendered] = useState('');
   const [error, setError] = useState('');
+  const [lostConnection, setLostConnection] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [placed, setPlaced] = useState(null);
   const [showReceipt, setShowReceipt] = useState(false);
 
-  const total = cartTotals.total;
+  const total = snapshot.total;
   const enough = tendered !== '' && toCents(tendered) >= toCents(total);
   const diff = tendered === '' ? 0 : fromCents(Math.abs(toCents(tendered) - toCents(total)));
   const quick = NOTES.filter((n) => n >= total).slice(0, 3);
   const canConfirm = method !== 'cash' || enough;
+  const safeClose = busy ? () => {} : onClose;
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    if (placed) return;
-    const result = placeOrder({ method, tendered });
+    if (placed || busy) return;
+    setBusy(true);
+    setError('');
+    setLostConnection(false);
+    const result = await placeOrder({ method, tendered });
+    setBusy(false);
     if (!result.ok) {
       setError(result.message);
+      setLostConnection(result.status === 0);
       return;
     }
     setPlaced(result.order);
@@ -64,10 +74,10 @@ export default function PaymentModal({ onClose, onPlaced }) {
   }
 
   return (
-    <Modal title="Payment" onClose={onClose}>
+    <Modal title="Payment" onClose={safeClose}>
       <form onSubmit={submit}>
         <div className="pay-total">
-          <span>{label(ORDER_TYPES, orderType)}, {cartTotals.count} {cartTotals.count === 1 ? 'item' : 'items'}</span>
+          <span>{label(ORDER_TYPES, snapshot.type)}, {snapshot.count} {snapshot.count === 1 ? 'item' : 'items'}</span>
           <strong>{formatMoney(total)}</strong>
         </div>
 
@@ -78,6 +88,7 @@ export default function PaymentModal({ onClose, onPlaced }) {
               type="button"
               role="radio"
               aria-checked={method === m.id}
+              disabled={busy}
               onClick={() => {
                 setMethod(m.id);
                 setError('');
@@ -92,15 +103,17 @@ export default function PaymentModal({ onClose, onPlaced }) {
           <div className="field">
             <label htmlFor="pay-cash">Cash received (SGD)</label>
             <input
-              id="pay-cash" type="number" min="0" step="0.01" autoFocus
+              id="pay-cash" type="number" min="0" step="0.01" autoFocus disabled={busy}
               value={tendered} onChange={(e) => setTendered(e.target.value)}
             />
             <div className="quick">
-              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setTendered(total.toFixed(2))}>
+              <button type="button" className="btn btn-secondary btn-sm" disabled={busy}
+                onClick={() => setTendered(total.toFixed(2))}>
                 Exact
               </button>
               {quick.map((n) => (
-                <button key={n} type="button" className="btn btn-secondary btn-sm" onClick={() => setTendered(String(n))}>
+                <button key={n} type="button" className="btn btn-secondary btn-sm" disabled={busy}
+                  onClick={() => setTendered(String(n))}>
                   {formatMoney(n)}
                 </button>
               ))}
@@ -120,11 +133,18 @@ export default function PaymentModal({ onClose, onPlaced }) {
         )}
 
         {error && <p className="error" role="alert">{error}</p>}
+        {lostConnection && (
+          <p className="hint" role="status">
+            If the order was already saved, pressing Confirm payment again will not create a second order.
+          </p>
+        )}
 
         <div className="form-actions">
-          <button type="button" className="btn btn-secondary" onClick={onClose}>Back to order</button>
-          <button type="submit" className="btn btn-primary" disabled={!canConfirm}>
-            Confirm payment
+          <button type="button" className="btn btn-secondary" onClick={safeClose} disabled={busy}>
+            Back to order
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={!canConfirm || busy}>
+            {busy ? 'Placing order...' : 'Confirm payment'}
           </button>
         </div>
       </form>

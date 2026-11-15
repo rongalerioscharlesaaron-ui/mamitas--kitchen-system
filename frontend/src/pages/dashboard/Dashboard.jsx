@@ -1,20 +1,48 @@
-import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
+import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
-import { useInventory } from '../../context/InventoryContext';
 import { useOrders } from '../../context/OrderContext';
+import { useAutoLoad } from '../../hooks/useAutoLoad';
 import StatCard from '../../components/StatCard';
 import StatusBadge from '../../components/StatusBadge';
-import { stockStatus, MOVE_LABEL, MOVE_TONE, EXPIRY_INFO } from '../../utils/inventory';
-import { expiryStatus, fmtDate, fmtDateTime } from '../../utils/dates';
-import { formatMoney, fromCents, toCents } from '../../utils/money';
+import { MOVE_LABEL, MOVE_TONE, EXPIRY_INFO } from '../../utils/inventory';
+import { fmtDate, fmtDateTime } from '../../utils/dates';
+import { formatMoney } from '../../utils/money';
 
-const isToday = (iso) => new Date(iso).toDateString() === new Date().toDateString();
 const ORDER_STATUS = {
   preparing: { label: 'Preparing', tone: 'info' },
   completed: { label: 'Completed', tone: 'ok' },
 };
-const orderItemCount = (o) => o.lines.reduce((s, l) => s + l.qty, 0);
+const STOCK_BADGE = {
+  out: { label: 'Out of stock', tone: 'danger' },
+  low: { label: 'Low stock', tone: 'warn' },
+};
+const itemsText = (n) => `${n} ${n === 1 ? 'item' : 'items'}`;
+
+// Shows a loading text or an error until the data has arrived
+function Gate({ state, children }) {
+  if (!state.data) {
+    return state.error ? (
+      <div className="notice notice-error" role="alert">
+        <span>{state.error}</span>
+        <button className="btn btn-secondary btn-sm" onClick={state.reload}>Try again</button>
+      </div>
+    ) : (
+      <p className="muted">Loading...</p>
+    );
+  }
+  return (
+    <>
+      {state.error && (
+        <div className="notice notice-error" role="alert">
+          <span>{state.error}</span>
+          <button className="btn btn-secondary btn-sm" onClick={state.reload}>Try again</button>
+        </div>
+      )}
+      {children(state.data)}
+    </>
+  );
+}
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -27,35 +55,6 @@ export default function Dashboard() {
       <InventoryContent />
     </section>
   );
-}
-
-/* ---------- Sales numbers shared by the cashier and owner views ---------- */
-function useSales() {
-  const { orders } = useOrders();
-  return useMemo(() => {
-    const today = orders.filter((o) => isToday(o.createdAt));
-    const salesCents = today.reduce((s, o) => s + toCents(o.total), 0);
-
-    const sold = {};
-    today.forEach((o) =>
-      o.lines.forEach((l) => {
-        sold[l.name] = (sold[l.name] || 0) + l.qty;
-      })
-    );
-    const top = Object.entries(sold)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5);
-
-    const sorted = [...orders].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    return {
-      todayCount: today.length,
-      sales: fromCents(salesCents),
-      average: today.length ? fromCents(Math.round(salesCents / today.length)) : 0,
-      preparing: sorted.filter((o) => o.status === 'preparing'),
-      recent: sorted.slice(0, 5),
-      top,
-    };
-  }, [orders]);
 }
 
 function RecentOrders({ orders }) {
@@ -85,14 +84,12 @@ function RecentOrders({ orders }) {
 
 /* ---------- Cashier ---------- */
 function CashierOverview({ user }) {
-  const s = useSales();
-  const { menuItems, stockOf } = useOrders();
+  const sales = useAutoLoad(() => api.get('/dashboard/sales'), []);
+  const { menuItems } = useOrders();
 
   const running = menuItems
-    .map((i) => ({ item: i, stock: stockOf(i.id) }))
-    .map((r) => ({ ...r, status: stockStatus(r.stock, r.item.minLevel) }))
-    .filter((r) => r.status.key !== 'in')
-    .sort((a, b) => (a.status.key === 'out' ? -1 : 1) - (b.status.key === 'out' ? -1 : 1));
+    .filter((i) => i.status !== 'in')
+    .sort((a, b) => (a.status === 'out' ? -1 : 1) - (b.status === 'out' ? -1 : 1));
 
   return (
     <section>
@@ -104,102 +101,112 @@ function CashierOverview({ user }) {
         <Link to="/orders" className="btn btn-primary btn-lg">New order</Link>
       </div>
 
-      <div className="stat-grid">
-        <StatCard label="Orders today" value={s.todayCount} tone="info" to="/orders/history" />
-        <StatCard label="Sales today" value={formatMoney(s.sales)} tone="ok" to="/orders/history" />
-        <StatCard
-          label="Still preparing" value={s.preparing.length} tone="warn"
-          to="/orders/history" hint="Not yet handed over"
-        />
-        <StatCard
-          label="Menu running low" value={running.length} tone="warn"
-          to="/orders" hint="Low or out of stock"
-        />
-      </div>
+      <Gate state={sales}>
+        {(s) => (
+          <>
+            <div className="stat-grid">
+              <StatCard label="Orders today" value={s.todayOrders} tone="info" to="/orders/history" />
+              <StatCard label="Sales today" value={formatMoney(s.todaySales)} tone="ok" to="/orders/history" />
+              <StatCard
+                label="Still preparing" value={s.preparingCount} tone="warn"
+                to="/orders/history" hint="Not yet handed over"
+              />
+              <StatCard
+                label="Menu running low" value={running.length} tone="warn"
+                to="/orders" hint="Low or out of stock"
+              />
+            </div>
 
-      <div className="panels">
-        <div className="card panel">
-          <h2>Being prepared</h2>
-          {s.preparing.length === 0 ? (
-            <p className="muted">No orders are waiting.</p>
-          ) : (
-            <ul className="list">
-              {s.preparing.slice(0, 5).map((o) => (
-                <li key={o.id}>
-                  <span>
-                    Order #{o.number}
-                    <br />
-                    <small className="muted">
-                      {orderItemCount(o)} {orderItemCount(o) === 1 ? 'item' : 'items'}, {fmtDateTime(o.createdAt)}
-                    </small>
-                  </span>
-                  <StatusBadge tone="info">Preparing</StatusBadge>
-                </li>
-              ))}
-            </ul>
-          )}
-          <Link to="/orders/history">Mark orders as completed</Link>
-        </div>
+            <div className="panels">
+              <div className="card panel">
+                <h2>Being prepared</h2>
+                {s.preparingOrders.length === 0 ? (
+                  <p className="muted">No orders are waiting.</p>
+                ) : (
+                  <ul className="list">
+                    {s.preparingOrders.map((o) => (
+                      <li key={o.id}>
+                        <span>
+                          Order #{o.number}
+                          <br />
+                          <small className="muted">{itemsText(o.itemCount)}, {fmtDateTime(o.createdAt)}</small>
+                        </span>
+                        <StatusBadge tone="info">Preparing</StatusBadge>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <Link to="/orders/history">Mark orders as completed</Link>
+              </div>
 
-        <div className="card panel">
-          <h2>Menu running low</h2>
-          {running.length === 0 ? (
-            <p className="muted">Everything on the menu is well stocked.</p>
-          ) : (
-            <ul className="list">
-              {running.slice(0, 6).map((r) => (
-                <li key={r.item.id}>
-                  <span>{r.item.name}, {r.stock} {r.item.unit} left</span>
-                  <StatusBadge tone={r.status.tone}>{r.status.label}</StatusBadge>
-                </li>
-              ))}
-            </ul>
-          )}
-          <Link to="/orders">Go to new order</Link>
-        </div>
+              <div className="card panel">
+                <h2>Menu running low</h2>
+                {running.length === 0 ? (
+                  <p className="muted">Everything on the menu is well stocked.</p>
+                ) : (
+                  <ul className="list">
+                    {running.slice(0, 6).map((i) => (
+                      <li key={i.id}>
+                        <span>{i.name}, {i.qtyUsable} {i.unit} left</span>
+                        <StatusBadge tone={STOCK_BADGE[i.status].tone}>{STOCK_BADGE[i.status].label}</StatusBadge>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <Link to="/orders">Go to new order</Link>
+              </div>
 
-        <RecentOrders orders={s.recent} />
-      </div>
+              <RecentOrders orders={s.recentOrders} />
+            </div>
+          </>
+        )}
+      </Gate>
     </section>
   );
 }
 
 /* ---------- Owner ---------- */
 function OwnerOverview() {
-  const s = useSales();
+  const sales = useAutoLoad(() => api.get('/dashboard/sales'), []);
   return (
     <section>
       <h1>Dashboard</h1>
       <p className="muted">Sales and inventory overview for today.</p>
 
-      <div className="stat-grid">
-        <StatCard label="Sales today" value={formatMoney(s.sales)} tone="ok" to="/orders/history" />
-        <StatCard label="Orders today" value={s.todayCount} tone="info" to="/orders/history" />
-        <StatCard label="Average order" value={formatMoney(s.average)} tone="info" to="/orders/history" />
-        <StatCard
-          label="Still preparing" value={s.preparing.length} tone="warn"
-          to="/orders/history" hint="Not yet handed over"
-        />
-      </div>
+      <Gate state={sales}>
+        {(s) => (
+          <>
+            <div className="stat-grid">
+              <StatCard label="Sales today" value={formatMoney(s.todaySales)} tone="ok" to="/orders/history" />
+              <StatCard label="Orders today" value={s.todayOrders} tone="info" to="/orders/history" />
+              <StatCard label="Average order" value={formatMoney(s.averageOrder)} tone="info" to="/orders/history" />
+              <StatCard
+                label="Still preparing" value={s.preparingCount} tone="warn"
+                to="/orders/history" hint="Not yet handed over"
+              />
+            </div>
 
-      <div className="panels">
-        <div className="card panel">
-          <h2>Top sellers today</h2>
-          {s.top.length === 0 ? (
-            <p className="muted">No sales yet today.</p>
-          ) : (
-            <ul className="list">
-              {s.top.map(([name, qty]) => (
-                <li key={name}>
-                  <span>{name}</span>
-                  <StatusBadge tone="muted">{qty} sold</StatusBadge>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <RecentOrders orders={s.recent} />
-      </div>
+            <div className="panels">
+              <div className="card panel">
+                <h2>Top sellers today</h2>
+                {s.topSellers.length === 0 ? (
+                  <p className="muted">No sales yet today.</p>
+                ) : (
+                  <ul className="list">
+                    {s.topSellers.map((t) => (
+                      <li key={t.name}>
+                        <span>{t.name}</span>
+                        <StatusBadge tone="muted">{t.qty} sold</StatusBadge>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <RecentOrders orders={s.recentOrders} />
+            </div>
+          </>
+        )}
+      </Gate>
 
       <div className="section-head">
         <h2>Inventory</h2>
@@ -211,99 +218,85 @@ function OwnerOverview() {
 
 /* ---------- Inventory cards and panels (kitchen and owner) ---------- */
 function InventoryContent() {
-  const { items, batches, movements, stockByItem, usableStockByItem, itemMap } = useInventory();
-
-  // Foods and trays count only sellable (non-expired) stock, like the Menu page
-  const stockOf = (i) => (i.type === 'ingredient' ? stockByItem[i.id] : usableStockByItem[i.id]) || 0;
-
-  const attention = items
-    .map((i) => ({ item: i, stock: stockOf(i) }))
-    .map((r) => ({ ...r, status: stockStatus(r.stock, r.item.minLevel) }))
-    .filter((r) => r.status.key !== 'in')
-    .sort((a, b) => (a.status.key === 'out' ? -1 : 1) - (b.status.key === 'out' ? -1 : 1));
-
-  const live = batches.filter((b) => b.qty > 0 && b.expiry);
-  const expired = live.filter((b) => expiryStatus(b.expiry) === 'expired');
-  const soon = live.filter((b) => expiryStatus(b.expiry) === 'soon');
-  const alerts = [...expired, ...soon].sort((a, b) => a.expiry.localeCompare(b.expiry));
-
-  const weekAgo = Date.now() - 7 * 86400000;
-  const losses = movements.filter(
-    (m) => (m.type === 'DAMAGED' || m.type === 'SPOILED') && new Date(m.date).getTime() >= weekAgo
-  );
-
-  const recent = [...movements].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
-  const ingredients = items.filter((i) => i.type === 'ingredient').length;
+  const inv = useAutoLoad(() => api.get('/dashboard/inventory'), []);
 
   return (
-    <>
-      <div className="stat-grid">
-        <StatCard
-          label="Total items" value={items.length} tone="info" to="/inventory"
-          hint={`${ingredients} ingredients, ${items.length - ingredients} menu items`}
-        />
-        <StatCard label="Low or out of stock" value={attention.length} tone="warn" to="/inventory/menu" hint="Needs restocking" />
-        <StatCard label="Expiring soon" value={soon.length} tone="warn" to="/inventory/expiration" hint="Batches" />
-        <StatCard label="Expired" value={expired.length} tone="danger" to="/inventory/expiration" hint="Still on hand" />
-        <StatCard label="Damaged or spoiled" value={losses.length} tone="danger" to="/inventory/damaged" hint="Entries in the last 7 days" />
-      </div>
+    <Gate state={inv}>
+      {(v) => (
+        <>
+          <div className="stat-grid">
+            <StatCard
+              label="Total items" value={v.totalItems} tone="info" to="/inventory"
+              hint={`${v.ingredientCount} ingredients, ${v.menuItemCount} menu items`}
+            />
+            <StatCard label="Low or out of stock" value={v.lowOrOutCount} tone="warn" to="/inventory"
+              hint="Needs restocking" />
+            <StatCard label="Expiring soon" value={v.soonCount} tone="warn" to="/inventory/expiration"
+              hint="Batches" />
+            <StatCard label="Expired" value={v.expiredCount} tone="danger" to="/inventory/expiration"
+              hint="Still on hand" />
+            <StatCard label="Damaged or spoiled" value={v.losses7d} tone="danger" to="/inventory/damaged"
+              hint="Entries in the last 7 days" />
+          </div>
 
-      <div className="panels">
-        <div className="card panel">
-          <h2>Needs restock</h2>
-          {attention.length === 0 ? (
-            <p className="muted">Everything is well stocked.</p>
-          ) : (
-            <ul className="list">
-              {attention.slice(0, 5).map((r) => (
-                <li key={r.item.id}>
-                  <span>{r.item.name}, {r.stock} of {r.item.minLevel} {r.item.unit}</span>
-                  <StatusBadge tone={r.status.tone}>{r.status.label}</StatusBadge>
-                </li>
-              ))}
-            </ul>
-          )}
-          <Link to="/inventory">View inventory</Link>
-        </div>
+          <div className="panels">
+            <div className="card panel">
+              <h2>Needs restock</h2>
+              {v.lowOrOut.length === 0 ? (
+                <p className="muted">Everything is well stocked.</p>
+              ) : (
+                <ul className="list">
+                  {v.lowOrOut.map((i) => (
+                    <li key={i.id}>
+                      <span>{i.name}, {i.stock} of {i.minLevel} {i.unit}</span>
+                      <StatusBadge tone={STOCK_BADGE[i.status].tone}>{STOCK_BADGE[i.status].label}</StatusBadge>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Link to="/inventory">View inventory</Link>
+            </div>
 
-        <div className="card panel">
-          <h2>Expiry alerts</h2>
-          {alerts.length === 0 ? (
-            <p className="muted">No batches are close to expiring.</p>
-          ) : (
-            <ul className="list">
-              {alerts.slice(0, 5).map((b) => {
-                const info = EXPIRY_INFO[expiryStatus(b.expiry)];
-                const item = itemMap[b.itemId];
-                return (
-                  <li key={b.id}>
-                    <span>{item?.name}, {b.qty} {item?.unit}, {fmtDate(b.expiry)}</span>
-                    <StatusBadge tone={info.tone}>{info.label}</StatusBadge>
+            <div className="card panel">
+              <h2>Expiry alerts</h2>
+              {v.expiryAlerts.length === 0 ? (
+                <p className="muted">No batches are close to expiring.</p>
+              ) : (
+                <ul className="list">
+                  {v.expiryAlerts.map((b) => (
+                    <li key={b.batchCode}>
+                      <span>
+                        {b.itemName}, {b.qtyRemaining} {b.unit}
+                        <br />
+                        <small className="muted">{b.batchCode}, {fmtDate(b.expiryDate)}</small>
+                      </span>
+                      <StatusBadge tone={EXPIRY_INFO[b.status].tone}>{EXPIRY_INFO[b.status].label}</StatusBadge>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Link to="/inventory/expiration">View expiration monitoring</Link>
+            </div>
+
+            <div className="card panel">
+              <h2>Recent stock movements</h2>
+              <ul className="list">
+                {v.recentMovements.map((m) => (
+                  <li key={m.id}>
+                    <span>
+                      {m.itemName}, {m.qty} {m.unit}
+                      <br />
+                      <small className="muted">{m.batchCode}, {fmtDateTime(m.createdAt)}</small>
+                    </span>
+                    <StatusBadge tone={MOVE_TONE[m.type]}>{MOVE_LABEL[m.type]}</StatusBadge>
                   </li>
-                );
-              })}
-            </ul>
-          )}
-          <Link to="/inventory/expiration">View expiration monitoring</Link>
-        </div>
-
-        <div className="card panel">
-          <h2>Recent stock movements</h2>
-          <ul className="list">
-            {recent.map((m) => (
-              <li key={m.id}>
-                <span>
-                  {itemMap[m.itemId]?.name}, {m.qty} {itemMap[m.itemId]?.unit}
-                  <br />
-                  <small className="muted">{fmtDateTime(m.date)}</small>
-                </span>
-                <StatusBadge tone={MOVE_TONE[m.type]}>{MOVE_LABEL[m.type]}</StatusBadge>
-              </li>
-            ))}
-          </ul>
-          <Link to="/inventory/movements">View all logs</Link>
-        </div>
-      </div>
-    </>
+                ))}
+              </ul>
+              <Link to="/inventory/movements">View all logs</Link>
+            </div>
+          </div>
+        </>
+      )}
+    </Gate>
   );
 }

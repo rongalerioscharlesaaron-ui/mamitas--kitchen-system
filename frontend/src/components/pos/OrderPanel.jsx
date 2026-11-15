@@ -2,16 +2,17 @@ import { useState } from 'react';
 import { Minus, Plus, X } from 'lucide-react';
 import { useOrders } from '../../context/OrderContext';
 import ConfirmDialog from '../ConfirmDialog';
-import { SHOP, ORDER_TYPES } from '../../config/shop';
+import { ORDER_TYPES } from '../../config/shop';
 import { formatMoney } from '../../utils/money';
 
 export default function OrderPanel({ onCharge }) {
   const {
-    cartLines, cartTotals, orderType, setOrderType,
-    addToCart, setQty, removeFromCart, clearCart, addable,
+    cartLines, cartTotals, orderType, setOrderType, shop,
+    addToCart, setQty, removeFromCart, clearCart, addable, stockOf,
   } = useOrders();
   const [confirmClear, setConfirmClear] = useState(false);
   const empty = cartLines.length === 0;
+  const over = cartLines.filter((l) => l.qty > stockOf(l.itemId));
 
   return (
     <aside className="order-panel card" aria-label="Current order">
@@ -45,6 +46,11 @@ export default function OrderPanel({ onCharge }) {
               <div>
                 <div className="order-line-name">{l.name}</div>
                 <div className="order-line-each">{formatMoney(l.price)} each</div>
+                {l.qty > stockOf(l.itemId) && (
+                  <div className="error" style={{ margin: 0, fontSize: '0.85rem' }}>
+                    Only {stockOf(l.itemId)} available now
+                  </div>
+                )}
               </div>
               <div className="order-line-total">{formatMoney(l.lineTotal)}</div>
               <div className="stepper">
@@ -80,9 +86,9 @@ export default function OrderPanel({ onCharge }) {
       )}
 
       <div className="totals">
-        {SHOP.gstRegistered && (
+        {shop.gstRegistered && (
           <div className="totals-row">
-            <span>GST included ({Math.round(SHOP.gstRate * 100)}%)</span>
+            <span>GST included ({Math.round(shop.gstRate * 100)}%)</span>
             <span>{formatMoney(cartTotals.gst)}</span>
           </div>
         )}
@@ -92,8 +98,14 @@ export default function OrderPanel({ onCharge }) {
         </div>
       </div>
 
+      {over.length > 0 && (
+        <p className="error" role="alert" style={{ margin: 0 }}>
+          Not enough stock for {over.map((l) => l.name).join(', ')}. Lower the quantity to continue.
+        </p>
+      )}
+
       <div className="order-actions">
-        <button className="btn btn-primary btn-lg" disabled={empty} onClick={onCharge}>
+        <button className="btn btn-primary btn-lg" disabled={empty || over.length > 0} onClick={onCharge}>
           {empty ? 'Charge' : `Charge ${formatMoney(cartTotals.total)}`}
         </button>
         <button className="btn btn-secondary" disabled={empty} onClick={() => setConfirmClear(true)}>
