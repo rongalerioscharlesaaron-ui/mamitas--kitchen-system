@@ -85,7 +85,8 @@ export async function createItem(user, body) {
       integer: !isIngredient,
       allowEmpty: true,
     }) ?? 0;
-  const expiry = date(b.expiry, 'Expiry date', { allowEmpty: true });
+  // Foods and trays are cooked fresh for the day, so no expiry date is entered for them
+  const expiry = isIngredient ? date(b.expiry, 'Expiry date', { allowEmpty: true }) : null;
 
   if (isIngredient && hasExpiry) {
     if (!(qty > 0)) throw badRequest('Enter the quantity received for this batch.');

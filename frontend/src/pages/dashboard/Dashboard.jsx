@@ -268,7 +268,7 @@ function InventoryContent() {
                       <span>
                         {b.itemName}, {b.qtyRemaining} {b.unit}
                         <br />
-                        <small className="muted">{b.batchCode}, {fmtDate(b.expiryDate)}</small>
+                        <small className="muted">{b.itemType === 'ingredient' ? `${b.batchCode}, ` : ''}{fmtDate(b.expiryDate)}</small>
                       </span>
                       <StatusBadge tone={EXPIRY_INFO[b.status].tone}>{EXPIRY_INFO[b.status].label}</StatusBadge>
                     </li>
@@ -286,7 +286,7 @@ function InventoryContent() {
                     <span>
                       {m.itemName}, {m.qty} {m.unit}
                       <br />
-                      <small className="muted">{m.batchCode}, {fmtDateTime(m.createdAt)}</small>
+                      <small className="muted">{m.itemType === 'ingredient' ? `${m.batchCode}, ` : ''}{fmtDateTime(m.createdAt)}</small>
                     </span>
                     <StatusBadge tone={MOVE_TONE[m.type]}>{MOVE_LABEL[m.type]}</StatusBadge>
                   </li>

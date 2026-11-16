@@ -11,7 +11,8 @@
     "smoke:auth": "node scripts/smoke-auth.js",
     "smoke:inventory": "node scripts/smoke-inventory.js",
     "smoke:orders": "node scripts/smoke-orders.js",
-    "smoke:adjust": "node scripts/smoke-adjust.js"
+    "smoke:adjust": "node scripts/smoke-adjust.js",
+    "smoke:menu": "node scripts/smoke-menu.js"
   },
   "keywords": [],
   "author": "",
