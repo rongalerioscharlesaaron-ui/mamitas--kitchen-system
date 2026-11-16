@@ -10,7 +10,7 @@ const GROUPS = [
 ];
 
 export default function AdjustStockModal({ defaultItemId = '', types = null, onClose, onDone }) {
-  const { items, batches, adjustBatch } = useInventory();
+  const { items, batches, usableStockByItem, adjustBatch, adjustMenuStock } = useInventory();
 
   const batchesOf = (itemId) =>
     batches
@@ -18,7 +18,8 @@ export default function AdjustStockModal({ defaultItemId = '', types = null, onC
       .sort((a, b) => a.code.localeCompare(b.code));
 
   const [form, setForm] = useState(() => {
-    const list = defaultItemId ? batchesOf(defaultItemId) : [];
+    const first = items.find((i) => i.id === Number(defaultItemId));
+    const list = first && first.type === 'ingredient' ? batchesOf(first.id) : [];
     return {
       itemId: defaultItemId ? String(defaultItemId) : '',
       batchId: list.length === 1 ? String(list[0].id) : '',
@@ -31,18 +32,21 @@ export default function AdjustStockModal({ defaultItemId = '', types = null, onC
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   const item = items.find((i) => i.id === Number(form.itemId));
-  const list = item ? batchesOf(item.id) : [];
+  const isMenu = item && item.type !== 'ingredient';
+  const list = item && !isMenu ? batchesOf(item.id) : [];
   const batch = list.find((b) => b.id === Number(form.batchId));
-  const whole = item && item.type !== 'ingredient';
+  const system = isMenu ? usableStockByItem[item.id] || 0 : batch?.qty;
   const counted = form.counted === '' ? null : Number(form.counted);
   const diff =
-    batch && counted !== null && !Number.isNaN(counted)
-      ? Math.round((counted - batch.qty) * 1000) / 1000
+    system !== undefined && counted !== null && !Number.isNaN(counted)
+      ? Math.round((counted - system) * 1000) / 1000
       : null;
+  const ready = isMenu || Boolean(batch);
 
   const onItem = (e) => {
     const itemId = e.target.value;
-    const options = itemId ? batchesOf(itemId) : [];
+    const chosen = items.find((i) => i.id === Number(itemId));
+    const options = chosen && chosen.type === 'ingredient' ? batchesOf(itemId) : [];
     setForm({ ...form, itemId, batchId: options.length === 1 ? String(options[0].id) : '', counted: '' });
   };
 
@@ -56,13 +60,12 @@ export default function AdjustStockModal({ defaultItemId = '', types = null, onC
   const submit = async (e) => {
     e.preventDefault();
     if (busy) return;
+    if (!item) return setError('Choose an item.');
     setBusy(true);
     setError('');
-    const result = await adjustBatch({
-      batchId: Number(form.batchId) || null,
-      countedQty: form.counted,
-      reason: form.reason,
-    });
+    const result = isMenu
+      ? await adjustMenuStock({ itemId: item.id, countedQty: form.counted, reason: form.reason })
+      : await adjustBatch({ batchId: Number(form.batchId) || null, countedQty: form.counted, reason: form.reason });
     setBusy(false);
     if (!result.ok) return setError(result.message);
     onDone(result);
@@ -73,8 +76,8 @@ export default function AdjustStockModal({ defaultItemId = '', types = null, onC
     <Modal title="Adjust stock" onClose={onClose}>
       <form onSubmit={submit}>
         <div className="info-box">
-          Use this after a real stock count. The batch is set to the quantity you counted, and the difference is
-          saved in the movement log as an Adjustment.
+          Use this after a real count. The stock is set to the quantity you counted, and the difference is saved in the
+          movement log as an Adjustment.
         </div>
 
         <div className="field">
@@ -95,30 +98,38 @@ export default function AdjustStockModal({ defaultItemId = '', types = null, onC
           </select>
         </div>
 
-        <div className="field">
-          <label htmlFor="as-batch">2. Batch ID</label>
-          <select id="as-batch" value={form.batchId} onChange={set('batchId')} disabled={!item}>
-            <option value="">
-              {!item ? 'Select an item first' : list.length ? 'Select batch' : 'No batches in stock'}
-            </option>
-            {list.map((b) => (
-              <option key={b.id} value={b.id}>{batchLabel(b)}</option>
-            ))}
-          </select>
-          <span className="hint">Count each batch separately.</span>
-        </div>
+        {isMenu ? (
+          <p className="hint" style={{ margin: '0 0 14px' }}>
+            For foods and trays you count today&apos;s servings. No batch is needed.
+          </p>
+        ) : (
+          <div className="field">
+            <label htmlFor="as-batch">2. Batch ID</label>
+            <select id="as-batch" value={form.batchId} onChange={set('batchId')} disabled={!item}>
+              <option value="">
+                {!item ? 'Select an item first' : list.length ? 'Select batch' : 'No batches in stock'}
+              </option>
+              {list.map((b) => (
+                <option key={b.id} value={b.id}>{batchLabel(b)}</option>
+              ))}
+            </select>
+            <span className="hint">Count each batch separately.</span>
+          </div>
+        )}
 
         <div className="field">
-          <label htmlFor="as-counted">3. Quantity you counted {item ? `(${item.unit})` : ''}</label>
+          <label htmlFor="as-counted">
+            {isMenu ? '2.' : '3.'} Quantity you counted {item ? `(${item.unit})` : ''}
+          </label>
           <input
-            id="as-counted" type="number" min="0" step={whole ? '1' : 'any'}
-            value={form.counted} onChange={set('counted')} disabled={!batch}
+            id="as-counted" type="number" min="0" step={isMenu ? '1' : 'any'}
+            value={form.counted} onChange={set('counted')} disabled={!ready}
           />
           {diff !== null && (
             <span className="hint">
               {diff === 0
                 ? 'Same as the system. Nothing to adjust.'
-                : `The system shows ${batch.qty} ${item.unit}. Difference: ${diff > 0 ? '+' : ''}${diff} ${item.unit}.`}
+                : `The system shows ${system} ${item.unit}. Difference: ${diff > 0 ? '+' : ''}${diff} ${item.unit}.`}
             </span>
           )}
         </div>

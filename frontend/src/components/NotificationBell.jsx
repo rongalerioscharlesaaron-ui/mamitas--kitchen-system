@@ -9,7 +9,7 @@ import { expiryStatus, fmtDate } from '../utils/dates';
 
 export default function NotificationBell() {
   const { user } = useAuth();
-  const { items, batches, stockByItem, itemMap } = useInventory();
+  const { items, batches, stockByItem, usableStockByItem, itemMap } = useInventory();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -33,17 +33,20 @@ export default function NotificationBell() {
   const list = [];
   if (user.role === 'kitchen' || user.role === 'owner') {
     items.forEach((i) => {
-      const stock = stockByItem[i.id] || 0;
+      const stock = (i.type === 'ingredient' ? stockByItem[i.id] : usableStockByItem[i.id]) || 0;
       const s = stockStatus(stock, i.minLevel);
       if (s.key !== 'in') {
         list.push({
           id: `s-${i.id}`, tone: s.tone, badge: s.label, title: i.name,
-          detail: `${stock} ${i.unit} left, minimum ${i.minLevel}`, to: '/inventory',
+          detail: `${stock} ${i.unit} left, minimum ${i.minLevel}`,
+          to: i.type === 'ingredient' ? '/inventory' : '/inventory/menu',
         });
       }
     });
+
+    // Ingredients: expired and expiring soon
     batches
-      .filter((b) => b.qty > 0 && b.expiry)
+      .filter((b) => b.qty > 0 && b.expiry && itemMap[b.itemId]?.type === 'ingredient')
       .forEach((b) => {
         const st = expiryStatus(b.expiry);
         if (st !== 'expired' && st !== 'soon') return;
@@ -52,11 +55,28 @@ export default function NotificationBell() {
           id: `e-${b.id}`,
           tone: st === 'expired' ? 'danger' : 'warn',
           badge: st === 'expired' ? 'Expired' : 'Expiring soon',
-          title: item?.name ?? 'Item',
-          detail: `${b.qty} ${item?.unit ?? ''}, expires ${fmtDate(b.expiry)}`,
+          title: item.name,
+          detail: `${b.qty} ${item.unit}, expires ${fmtDate(b.expiry)}`,
           to: '/inventory/expiration',
         });
       });
+
+    // Foods and trays always expire on the day they are cooked, so only leftovers raise an alert
+    const expiredMenu = new Set();
+    batches.forEach((b) => {
+      const item = itemMap[b.itemId];
+      if (item && item.type !== 'ingredient' && b.qty > 0 && b.expiry && expiryStatus(b.expiry) === 'expired') {
+        expiredMenu.add(b.itemId);
+      }
+    });
+    if (expiredMenu.size > 0) {
+      list.push({
+        id: 'menu-expired', tone: 'danger', badge: 'Expired',
+        title: 'Expired servings and trays',
+        detail: `${expiredMenu.size} ${expiredMenu.size === 1 ? 'item has' : 'items have'} leftovers from earlier days to write off`,
+        to: '/inventory/menu',
+      });
+    }
     list.sort((a, b) => (a.tone === b.tone ? 0 : a.tone === 'danger' ? -1 : 1));
   }
 

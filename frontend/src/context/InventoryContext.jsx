@@ -25,17 +25,19 @@ export function InventoryProvider({ children }) {
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
-    const [it, ba, mv] = await Promise.all([
+    // Ingredients and menu items are loaded separately, so a busy day of sales
+    // never pushes the ingredient history out of the list
+    const [it, ba, mvIng, mvMenu] = await Promise.all([
       api.get('/items'),
       api.get('/batches?inStock=true'),
-      api.get('/movements?limit=500'),
+      api.get('/movements?kind=ingredient&limit=300'),
+      api.get('/movements?kind=menu&limit=300'),
     ]);
     setItems(it.items);
     setBatches(ba.batches.map(toBatch));
-    setMovements(mv.movements.map(toMovement));
+    setMovements([...mvIng.movements, ...mvMenu.movements].map(toMovement));
   }, []);
 
-  // Load when a kitchen or owner account is logged in; clear everything on logout
   useEffect(() => {
     let cancelled = false;
     setItems([]);
@@ -132,8 +134,8 @@ export function InventoryProvider({ children }) {
     });
   };
 
-  // Add a menu item: a food (servings) or a food tray
-  const addItem = ({ name, type, category, price, minLevel, qty, expiry }) =>
+  // Add a menu item: a food (servings) or a food tray. No expiry date: it is cooked fresh for the day.
+  const addItem = ({ name, type, category, price, minLevel, qty }) =>
     run(async () => {
       await api.post('/items', {
         type,
@@ -142,7 +144,6 @@ export function InventoryProvider({ children }) {
         price,
         minLevel,
         qty: qty === '' ? undefined : qty,
-        expiry: expiry || undefined,
       });
       return `${name.trim()} was added.`;
     });
@@ -159,16 +160,20 @@ export function InventoryProvider({ children }) {
     });
   };
 
-  const addStock = ({ itemId, qty, expiry }) => {
+  // Ingredients without an expiry date, and servings or trays for the day
+  const addStock = ({ itemId, qty }) => {
     const item = itemMap[itemId];
     if (!item) return Promise.resolve(fail('Choose an item.'));
+    const isMenu = item.type !== 'ingredient';
     return run(async () => {
-      const r = await api.post(`/items/${itemId}/batches`, { qty, expiry: expiry || undefined });
-      return `Added ${qty} ${item.unit} to ${item.name} (batch ${r.batch.code}).`;
+      const r = await api.post(`/items/${itemId}/batches`, { qty });
+      return isMenu
+        ? `Added ${qty} ${item.unit} of ${item.name} for today.`
+        : `Added ${qty} ${item.unit} to ${item.name} (batch ${r.batch.code}).`;
     });
   };
 
-  // Damaged or spoiled goods come off one specific batch
+  // Damaged or spoiled ingredients come off one specific batch
   const recordLoss = ({ itemId, batchId, qty, type, reason }) => {
     if (!itemId) return Promise.resolve(fail('Choose an item.'));
     if (!batchId) return Promise.resolve(fail('Choose the batch of this item.'));
@@ -178,13 +183,30 @@ export function InventoryProvider({ children }) {
     });
   };
 
+  // Damaged or spoiled servings come off today's stock
+  const recordMenuLoss = ({ itemId, qty, type, reason }) => {
+    if (!itemId) return Promise.resolve(fail('Choose an item.'));
+    return run(async () => {
+      const { result } = await api.post(`/items/${itemId}/loss`, { type, qty, reason });
+      return `Recorded ${result.qty} ${result.unit} of ${result.itemName} as ${result.type.toLowerCase()}.`;
+    });
+  };
+
   const writeOffBatch = (batchId) =>
     run(async () => {
       const { result } = await api.post(`/batches/${batchId}/write-off`);
       return `${result.qty} ${result.unit} of ${result.itemName} (batch ${result.batchCode}) written off as expired.`;
     });
 
-  // Sets a batch to the quantity that was really counted. The difference is logged as an Adjustment.
+  // Writes off expired servings and trays: of one item, or of the whole menu
+  const writeOffExpiredMenu = (itemId) =>
+    run(async () => {
+      const { result } = await api.post('/items/write-off-expired', itemId ? { itemId } : {});
+      if (result.batches === 0) return 'Nothing had expired.';
+      return `Wrote off ${result.servings} expired ${result.servings === 1 ? 'serving or tray' : 'servings and trays'} from ${result.items} ${result.items === 1 ? 'item' : 'items'}.`;
+    });
+
+  // Sets an ingredient batch to the quantity that was really counted
   const adjustBatch = ({ batchId, countedQty, reason }) => {
     if (!batchId) return Promise.resolve(fail('Choose the batch you counted.'));
     return run(async () => {
@@ -194,15 +216,23 @@ export function InventoryProvider({ children }) {
     });
   };
 
-  // The POS is connected in Part C. Until then the old order screen cannot sell.
-  const consumeStock = () => ({ ok: false, message: 'The POS is connected in the next stage.' });
+  // Sets today's servings to the quantity that was really counted
+  const adjustMenuStock = ({ itemId, countedQty, reason }) => {
+    if (!itemId) return Promise.resolve(fail('Choose an item.'));
+    return run(async () => {
+      const { result } = await api.post(`/items/${itemId}/adjust`, { countedQty, reason });
+      const sign = result.diff > 0 ? '+' : '';
+      return `${result.itemName} is now ${result.to} ${result.unit} for today (${sign}${result.diff}).`;
+    });
+  };
 
   return (
     <InventoryContext.Provider
       value={{
         items, batches, movements, stockByItem, usableStockByItem, itemMap, batchMap,
         ready, error, refresh,
-        addIngredient, addItem, updateMenuItem, addStock, recordLoss, writeOffBatch, adjustBatch, consumeStock,
+        addIngredient, addItem, updateMenuItem, addStock, recordLoss, recordMenuLoss,
+        writeOffBatch, writeOffExpiredMenu, adjustBatch, adjustMenuStock,
       }}
     >
       {children}

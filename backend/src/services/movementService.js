@@ -2,8 +2,8 @@ import { query } from '../config/db.js';
 
 export const MOVEMENT_TYPES = ['IN', 'USED', 'DAMAGED', 'SPOILED', 'ADJUSTMENT'];
 
-// filters: { types: [], q, limit, offset }
-export async function listMovements({ types, q, limit, offset }) {
+// filters: { types: [], q, kind: 'ingredient' | 'menu', limit, offset }
+export async function listMovements({ types, q, kind, limit, offset }) {
   const conds = [];
   const params = [];
 
@@ -11,6 +11,8 @@ export async function listMovements({ types, q, limit, offset }) {
     params.push(types);
     conds.push(`m.movement_type = ANY($${params.length}::movement_type[])`);
   }
+  if (kind === 'ingredient') conds.push(`i.item_type = 'ingredient'`);
+  if (kind === 'menu') conds.push(`i.item_type <> 'ingredient'`);
   if (q) {
     params.push(q);
     const n = params.length;

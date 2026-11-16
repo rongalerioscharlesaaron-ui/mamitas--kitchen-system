@@ -78,7 +78,9 @@ export async function addBatch(user, rawItemId, body) {
 
   const isIngredient = item.item_type === 'ingredient';
   const qty = number(b.qty, 'Quantity', { min: 0.001, max: 1000000, integer: !isIngredient });
-  const expiry = date(b.expiry, 'Expiry date', { allowEmpty: true });
+  // Foods and trays are cooked fresh for the day: no expiry date is asked for, and the
+  // database sets it to the day the servings are added.
+  const expiry = isIngredient ? date(b.expiry, 'Expiry date', { allowEmpty: true }) : null;
 
   if (isIngredient && item.has_expiry && !expiry) {
     throw badRequest('Enter the expiry date of this batch.');

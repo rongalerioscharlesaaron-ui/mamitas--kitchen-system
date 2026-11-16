@@ -1,13 +1,12 @@
 import { useState } from 'react';
 import Modal from '../Modal';
 import { useInventory } from '../../context/InventoryContext';
-import { todayStr } from '../../utils/dates';
 
 export default function StockInModal({
   defaultItemId = '', types = null, noExpiryOnly = false, onClose, onDone,
 }) {
-  const { items, stockByItem, addStock } = useInventory();
-  const [form, setForm] = useState({ itemId: defaultItemId, qty: '', expiry: '' });
+  const { items, stockByItem, usableStockByItem, addStock } = useInventory();
+  const [form, setForm] = useState({ itemId: defaultItemId ? String(defaultItemId) : '', qty: '' });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -25,7 +24,7 @@ export default function StockInModal({
     if (busy) return;
     setBusy(true);
     setError('');
-    const result = await addStock({ ...form, itemId: Number(form.itemId) });
+    const result = await addStock({ itemId: Number(form.itemId), qty: form.qty });
     setBusy(false);
     if (!result.ok) return setError(result.message);
     onDone(result);
@@ -33,7 +32,7 @@ export default function StockInModal({
   };
 
   return (
-    <Modal title="Stock in" onClose={onClose}>
+    <Modal title={isMenu ? 'Add servings' : 'Stock in'} onClose={onClose}>
       <form onSubmit={submit}>
         {noExpiryOnly && (
           <div className="info-box">
@@ -49,27 +48,33 @@ export default function StockInModal({
               <option key={i.id} value={i.id}>{i.name}</option>
             ))}
           </select>
-          {item && <span className="hint">Current stock: {stockByItem[item.id] || 0} {item.unit}</span>}
+          {item && (
+            <span className="hint">
+              {isMenu
+                ? `Available today: ${usableStockByItem[item.id] || 0} ${item.unit}`
+                : `Current stock: ${stockByItem[item.id] || 0} ${item.unit}`}
+            </span>
+          )}
         </div>
         <div className="field">
-          <label htmlFor="si-qty">Quantity received {item ? `(${item.unit})` : ''}</label>
+          <label htmlFor="si-qty">
+            {isMenu ? `${item.unit === 'trays' ? 'Trays' : 'Servings'} added` : 'Quantity received'} {item && !isMenu ? `(${item.unit})` : ''}
+          </label>
           <input
             id="si-qty" type="number" min="0" step={isMenu ? '1' : 'any'}
             value={form.qty} onChange={set('qty')}
           />
+          {isMenu && (
+            <span className="hint">
+              Freshly cooked for the day. No expiry date is needed: these expire at the end of the day.
+            </span>
+          )}
         </div>
-        {isMenu && (
-          <div className="field">
-            <label htmlFor="si-exp">Expiry date (optional)</label>
-            <input id="si-exp" type="date" min={todayStr()} value={form.expiry} onChange={set('expiry')} />
-            <span className="hint">Each entry gets its own batch ID.</span>
-          </div>
-        )}
         {error && <p className="error" role="alert">{error}</p>}
         <div className="form-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
           <button type="submit" className="btn btn-primary" disabled={busy}>
-            {busy ? 'Saving...' : 'Save stock in'}
+            {busy ? 'Saving...' : isMenu ? 'Save' : 'Save stock in'}
           </button>
         </div>
       </form>

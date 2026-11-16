@@ -50,6 +50,11 @@ export async function salesDashboard() {
   };
 }
 
+// Foods and trays always expire on the day they are added, so only EXPIRED ones raise an alert
+const ALERT_RULE = `qty_remaining > 0
+    AND expiry_status IN ('expired', 'soon')
+    AND (item_type = 'ingredient' OR expiry_status = 'expired')`;
+
 export async function inventoryDashboard() {
   const [stock, expiry, alerts, losses, movements] = await Promise.all([
     pool.query(
@@ -60,14 +65,14 @@ export async function inventoryDashboard() {
     pool.query(
       `SELECT expiry_status, COUNT(*)::int AS n
          FROM v_batch_status
-        WHERE qty_remaining > 0 AND expiry_status IN ('expired', 'soon')
+        WHERE ${ALERT_RULE}
         GROUP BY expiry_status`
     ),
     pool.query(
-      `SELECT batch_code, item_name, unit, qty_remaining, expiry_date, expiry_status
+      `SELECT batch_code, item_name, item_type, unit, qty_remaining, expiry_date, expiry_status
          FROM v_batch_status
-        WHERE qty_remaining > 0 AND expiry_status IN ('expired', 'soon')
-        ORDER BY expiry_date, batch_code
+        WHERE ${ALERT_RULE}
+        ORDER BY (expiry_status = 'expired') DESC, expiry_date, batch_code
         LIMIT 5`
     ),
     pool.query(
@@ -103,6 +108,7 @@ export async function inventoryDashboard() {
     expiryAlerts: alerts.rows.map((r) => ({
       batchCode: r.batch_code,
       itemName: r.item_name,
+      itemType: r.item_type,
       unit: r.unit,
       qtyRemaining: r.qty_remaining,
       expiryDate: r.expiry_date,

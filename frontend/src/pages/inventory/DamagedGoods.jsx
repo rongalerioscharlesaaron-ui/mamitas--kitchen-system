@@ -71,7 +71,7 @@ export default function DamagedGoods() {
               <tr key={m.id}>
                 <td>{fmtDateTime(m.date)}</td>
                 <td>{m.itemName}</td>
-                <td className="batch-id">{m.batchCode ?? 'None'}</td>
+                <td className="batch-id">{m.itemType === 'ingredient' ? (m.batchCode ?? 'None') : 'Not tracked'}</td>
                 <td>{TYPE_LABEL[m.itemType]}</td>
                 <td><StatusBadge tone={MOVE_TONE[m.type]}>{MOVE_LABEL[m.type]}</StatusBadge></td>
                 <td className="num">{m.qty} {m.unit}</td>
