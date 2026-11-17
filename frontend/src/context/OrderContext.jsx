@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { api, ApiError } from '../api/client';
 import { useAuth } from './AuthContext';
 import { useInventory } from './InventoryContext';
+import { useSession } from './SessionContext';
 import { SHOP } from '../config/shop';
 import { FOOD_CATEGORIES } from '../utils/inventory';
 import { toCents, fromCents } from '../utils/money';
@@ -17,6 +18,7 @@ export function OrderProvider({ children }) {
   const { user } = useAuth();
   const inventory = useInventory();
   const refreshInventory = inventory.refresh;
+  const { refresh: refreshSession } = useSession();
   const userId = user?.id ?? null;
   const active = Boolean(user && SALES_ROLES.includes(user.role));
   const inventoryActive = Boolean(user && STAFF_ROLES.includes(user.role));
@@ -181,10 +183,12 @@ export function OrderProvider({ children }) {
       await Promise.all([
         loadMenu().catch(() => {}),
         inventoryActive ? refreshInventory() : null,
+        refreshSession(),
       ]);
       return { ok: true, order: data.order, duplicate: data.duplicate };
     } catch (err) {
       loadMenu().catch(() => {}); // show the latest stock after a refused order
+      if (err instanceof ApiError && err.status === 409) refreshSession(); // the session may have been closed elsewhere
       if (err instanceof ApiError) return fail(err.message, err.status);
       return fail('Something went wrong. Please try again.', -1);
     }

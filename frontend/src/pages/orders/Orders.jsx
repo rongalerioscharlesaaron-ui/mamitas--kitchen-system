@@ -1,16 +1,34 @@
 import { useState } from 'react';
 import { useOrders } from '../../context/OrderContext';
+import { useSession } from '../../context/SessionContext';
 import MenuTile from '../../components/pos/MenuTile';
 import OrderPanel from '../../components/pos/OrderPanel';
 import PaymentModal from '../../components/pos/PaymentModal';
+import OpenSessionForm from '../../components/session/OpenSessionForm';
+import { fmtDayTime } from '../../utils/time';
 import { formatMoney } from '../../utils/money';
 
 export default function Orders() {
   const { menuItems, categories } = useOrders();
+  const { session, ready } = useSession();
   const [category, setCategory] = useState('all');
   const [search, setSearch] = useState('');
   const [paying, setPaying] = useState(false);
   const [lastOrder, setLastOrder] = useState(null);
+
+  if (!ready) return <p className="muted">Loading...</p>;
+
+  // No orders can be taken until the cash drawer is opened
+  if (!session) {
+    return (
+      <div>
+        <div className="page-head">
+          <h1>New order</h1>
+        </div>
+        <OpenSessionForm />
+      </div>
+    );
+  }
 
   const visible = menuItems.filter(
     (m) =>
@@ -25,6 +43,15 @@ export default function Orders() {
           <h1>New order</h1>
         </div>
         <p className="muted">Tap an item to add it to the order.</p>
+
+        {!session.openedToday && (
+          <div className="notice notice-error" role="status">
+            <span>
+              Your session was opened on {fmtDayTime(session.openedAt)}. Close it from the Dashboard and start a new
+              one for today.
+            </span>
+          </div>
+        )}
 
         {lastOrder && (
           <div className="notice notice-ok" role="status">

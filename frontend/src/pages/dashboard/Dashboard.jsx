@@ -1,12 +1,18 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useOrders } from '../../context/OrderContext';
+import { useSession } from '../../context/SessionContext';
 import { useAutoLoad } from '../../hooks/useAutoLoad';
 import StatCard from '../../components/StatCard';
 import StatusBadge from '../../components/StatusBadge';
+import SessionCard from '../../components/session/SessionCard';
+import OpenSessionForm from '../../components/session/OpenSessionForm';
+import CloseSessionModal from '../../components/session/CloseSessionModal';
 import { MOVE_LABEL, MOVE_TONE, EXPIRY_INFO } from '../../utils/inventory';
 import { fmtDate, fmtDateTime } from '../../utils/dates';
+import { fmtDayTime } from '../../utils/time';
 import { formatMoney } from '../../utils/money';
 
 const ORDER_STATUS = {
@@ -86,6 +92,8 @@ function RecentOrders({ orders }) {
 function CashierOverview({ user }) {
   const sales = useAutoLoad(() => api.get('/dashboard/sales'), []);
   const { menuItems } = useOrders();
+  const { session, ready } = useSession();
+  const [closing, setClosing] = useState(null); // the session being closed
 
   const running = menuItems
     .filter((i) => i.status !== 'in')
@@ -98,15 +106,21 @@ function CashierOverview({ user }) {
           <h1>Dashboard</h1>
           <p className="muted" style={{ margin: 0 }}>Welcome back, {user.name}.</p>
         </div>
-        <Link to="/orders" className="btn btn-primary btn-lg">New order</Link>
+        {session && <Link to="/orders" className="btn btn-primary btn-lg">New order</Link>}
       </div>
+
+      {!ready ? (
+        <p className="muted">Loading...</p>
+      ) : session ? (
+        <SessionCard session={session} onClose={() => setClosing(session)} />
+      ) : (
+        <OpenSessionForm />
+      )}
 
       <Gate state={sales}>
         {(s) => (
           <>
             <div className="stat-grid">
-              <StatCard label="Orders today" value={s.todayOrders} tone="info" to="/orders/history" />
-              <StatCard label="Sales today" value={formatMoney(s.todaySales)} tone="ok" to="/orders/history" />
               <StatCard
                 label="Still preparing" value={s.preparingCount} tone="warn"
                 to="/orders/history" hint="Not yet handed over"
@@ -161,13 +175,72 @@ function CashierOverview({ user }) {
           </>
         )}
       </Gate>
+
+      {closing && <CloseSessionModal session={closing} onClose={() => setClosing(null)} />}
     </section>
   );
 }
 
 /* ---------- Owner ---------- */
+const resultBadge = (s) => {
+  if (s.isOpen) return <StatusBadge tone="info">Open</StatusBadge>;
+  if (s.cashDifference === 0) return <StatusBadge tone="ok">Balanced</StatusBadge>;
+  return s.cashDifference < 0 ? (
+    <StatusBadge tone="danger">Short {formatMoney(-s.cashDifference)}</StatusBadge>
+  ) : (
+    <StatusBadge tone="warn">Over {formatMoney(s.cashDifference)}</StatusBadge>
+  );
+};
+
+function SessionsToday({ sessions }) {
+  const onShift = sessions.filter((s) => s.isOpen);
+  return (
+    <>
+      <p className="muted">
+        {onShift.length === 0
+          ? 'Nobody is on shift right now.'
+          : `On shift now: ${onShift.map((s) => `${s.cashier} since ${fmtDayTime(s.openedAt)}`).join(', ')}.`}
+      </p>
+      <div className="table-wrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Cashier</th>
+              <th>Time IN</th>
+              <th>Time OUT</th>
+              <th className="num">Orders</th>
+              <th className="num">Net sales</th>
+              <th className="num">Expected cash</th>
+              <th className="num">Counted cash</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sessions.length === 0 && (
+              <tr><td colSpan="8" className="empty">No sessions today.</td></tr>
+            )}
+            {sessions.map((s) => (
+              <tr key={s.id}>
+                <td>{s.cashier}</td>
+                <td>{fmtDayTime(s.openedAt)}</td>
+                <td>{s.isOpen ? 'Still open' : fmtDayTime(s.closedAt)}</td>
+                <td className="num">{s.orders}</td>
+                <td className="num">{formatMoney(s.netSales)}</td>
+                <td className="num">{formatMoney(s.expectedCash)}</td>
+                <td className="num">{s.isOpen ? '-' : formatMoney(s.countedCash)}</td>
+                <td>{resultBadge(s)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
 function OwnerOverview() {
   const sales = useAutoLoad(() => api.get('/dashboard/sales'), []);
+  const sessions = useAutoLoad(() => api.get('/sessions?date=today'), []);
   return (
     <section>
       <h1>Dashboard</h1>
@@ -207,6 +280,11 @@ function OwnerOverview() {
           </>
         )}
       </Gate>
+
+      <div className="section-head">
+        <h2>Cashier sessions today</h2>
+      </div>
+      <Gate state={sessions}>{(d) => <SessionsToday sessions={d.sessions} />}</Gate>
 
       <div className="section-head">
         <h2>Inventory</h2>
@@ -264,11 +342,13 @@ function InventoryContent() {
               ) : (
                 <ul className="list">
                   {v.expiryAlerts.map((b) => (
-                    <li key={b.batchCode}>
+                    <li key={`${b.batchCode}`}>
                       <span>
                         {b.itemName}, {b.qtyRemaining} {b.unit}
                         <br />
-                        <small className="muted">{b.itemType === 'ingredient' ? `${b.batchCode}, ` : ''}{fmtDate(b.expiryDate)}</small>
+                        <small className="muted">
+                          {b.itemType === 'ingredient' ? `${b.batchCode}, ` : ''}{fmtDate(b.expiryDate)}
+                        </small>
                       </span>
                       <StatusBadge tone={EXPIRY_INFO[b.status].tone}>{EXPIRY_INFO[b.status].label}</StatusBadge>
                     </li>
@@ -286,7 +366,9 @@ function InventoryContent() {
                     <span>
                       {m.itemName}, {m.qty} {m.unit}
                       <br />
-                      <small className="muted">{m.itemType === 'ingredient' ? `${m.batchCode}, ` : ''}{fmtDateTime(m.createdAt)}</small>
+                      <small className="muted">
+                        {m.itemType === 'ingredient' ? `${m.batchCode}, ` : ''}{fmtDateTime(m.createdAt)}
+                      </small>
                     </span>
                     <StatusBadge tone={MOVE_TONE[m.type]}>{MOVE_LABEL[m.type]}</StatusBadge>
                   </li>

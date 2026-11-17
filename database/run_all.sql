@@ -12,4 +12,5 @@ BEGIN;
 \ir migrations/001_orders_client_request_id.sql
 \ir migrations/002_allow_adjustment_quantities.sql
 \ir migrations/003_menu_daily_servings.sql
+\ir migrations/004_cashier_sessions.sql
 COMMIT;

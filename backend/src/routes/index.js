@@ -6,6 +6,7 @@ import items from './items.routes.js';
 import batches from './batches.routes.js';
 import movements from './movements.routes.js';
 import orders from './orders.routes.js';
+import sessions from './sessions.routes.js';
 import dashboard from './dashboard.routes.js';
 import { menuRouter, categoriesRouter, shopRouter } from './catalog.routes.js';
 
@@ -21,6 +22,7 @@ router.use('/items', items);
 router.use('/batches', batches);
 router.use('/movements', movements);
 router.use('/orders', orders);
+router.use('/sessions', sessions);
 router.use('/dashboard', dashboard);
 
 export default router;

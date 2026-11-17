@@ -72,3 +72,14 @@ const dayFormat = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Singapore', year: 'numeric', month: '2-digit', day: '2-digit',
 });
 export const dayOffset = (n) => dayFormat.format(new Date(Date.now() + n * 86400000));
+
+// A cashier needs an open session before orders can be placed
+export async function ensureOpenSession(cookie, openingCash = 100) {
+  const current = await api('GET', '/sessions/current', { cookie });
+  if (current.data?.session) return current.data.session;
+  const opened = await api('POST', '/sessions/open', { cookie, body: { openingCash } });
+  if (opened.status !== 201) {
+    throw new Error(`Could not open a test session (${opened.status}): ${opened.data?.error}`);
+  }
+  return opened.data.session;
+}

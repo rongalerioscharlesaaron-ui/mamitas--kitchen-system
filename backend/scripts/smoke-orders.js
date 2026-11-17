@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import {
-  api, check, summary, ensureUser, loginAs, query, pool, dayOffset,
+  api, check, summary, ensureUser, loginAs, query, pool, dayOffset, ensureOpenSession,
 } from './test-helpers.js';
 
 const rand = () => crypto.randomBytes(12).toString('hex');
@@ -25,6 +25,7 @@ async function main() {
     const K = await loginAs('smoke_kitchen', pw.kitchen);
     const C = await loginAs('smoke_cashier', pw.cashier);
     const O = await loginAs('smoke_owner', pw.owner);
+     await ensureOpenSession(C);
 
     const place = (lines, payment, extra = {}, cookie = C) =>
       api('POST', '/orders', { cookie, body: { type: 'dine_in', lines, payment, ...extra } });
