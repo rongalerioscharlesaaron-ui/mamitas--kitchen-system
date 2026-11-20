@@ -6,9 +6,9 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ---------- Users (passwords are hashed with bcrypt) ----------
 INSERT INTO users (username, password_hash, full_name, role) VALUES
-  ('cashier', crypt('cashier123', gen_salt('bf', 10)), 'Cashier',       'cashier'),
-  ('kitchen', crypt('kitchen123', gen_salt('bf', 10)), 'Kitchen Staff', 'kitchen'),
-  ('owner',   crypt('owner123',   gen_salt('bf', 10)), 'Owner',         'owner');
+  ('Cashier', crypt('cashier123', gen_salt('bf', 10)), 'Cashier',       'cashier'),
+  ('Kitchen', crypt('kitchen123', gen_salt('bf', 10)), 'Kitchen Staff', 'kitchen'),
+  ('Owner',   crypt('owner123',   gen_salt('bf', 10)), 'Owner',         'owner');
 
 -- ---------- Categories ----------
 INSERT INTO categories (name, kind) VALUES

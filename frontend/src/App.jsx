@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import ProtectedRoute from './routes/ProtectedRoute';
 import MainLayout from './layouts/MainLayout';
+import MyAccount from './pages/auth/MyAccount';
 import Login from './pages/auth/Login';
 import Dashboard from './pages/dashboard/Dashboard';
 import Orders from './pages/orders/Orders';
@@ -22,9 +23,12 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<MainLayout />}>
           <Route index element={<Dashboard />} />
+          <Route path="account" element={<MyAccount />} />
 
-          <Route element={<ProtectedRoute roles={['cashier', 'owner']} />}>
+          <Route element={<ProtectedRoute roles={['cashier']} />}>
             <Route path="orders" element={<Orders />} />
+          </Route>
+          <Route element={<ProtectedRoute roles={['cashier', 'owner']} />}>
             <Route path="orders/history" element={<OrderHistory />} />
           </Route>
 

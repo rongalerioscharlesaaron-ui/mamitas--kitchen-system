@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Users, Settings, UtensilsCrossed, ShieldCheck, Database, Plus, RefreshCw } from 'lucide-react';
+import { Users, Settings, UtensilsCrossed, ShieldCheck, Database, Plus, RefreshCw, Download } from 'lucide-react';
 import { api } from '../../api/client';
 import { useInventory } from '../../context/InventoryContext';
 import { SHOP } from '../../config/shop';
@@ -18,11 +18,63 @@ const ADMIN_TABS = [
   { id: 'audit', label: 'Audit Logs & Backups', icon: ShieldCheck },
 ];
 
-const FALLBACK_USERS = [
-  { id: 1, username: 'owner', fullName: 'Owner', role: 'owner', isActive: true, lastLogin: null },
-  { id: 2, username: 'cashier', fullName: 'Cashier', role: 'cashier', isActive: true, lastLogin: null },
-  { id: 3, username: 'kitchen', fullName: 'Kitchen Staff', role: 'kitchen', isActive: true, lastLogin: null },
+const AUDIT_CATEGORIES = [
+  { id: '', label: 'All categories' },
+  { id: 'login', label: 'Sign-in & Security' },
+  { id: 'account', label: 'Account & Passwords' },
+  { id: 'access', label: 'Access Denied' },
+  { id: 'admin', label: 'Administration' },
+  { id: 'session', label: 'Cashier Sessions' },
+  { id: 'order', label: 'Orders & POS' },
+  { id: 'stock', label: 'Inventory & Stock' },
 ];
+
+const FALLBACK_USERS = [
+  { id: 1, username: 'owner', fullName: 'Owner', role: 'owner', isActive: true, mustChangePassword: false, isLocked: false },
+  { id: 2, username: 'cashier', fullName: 'Cashier', role: 'cashier', isActive: true, mustChangePassword: false, isLocked: false },
+  { id: 3, username: 'kitchen', fullName: 'Kitchen Staff', role: 'kitchen', isActive: true, mustChangePassword: false, isLocked: false },
+];
+
+function describeAudit(l) {
+  const d = l.details || {};
+  const target = l.entity ? `${l.entity}${l.entity_id ? ` #${l.entity_id}` : ''}` : '';
+  switch (l.action) {
+    case 'login.success':
+      return 'Signed in successfully';
+    case 'login.failed':
+      return `Failed sign-in attempt (${d.reason || 'invalid credentials'})`;
+    case 'login.blocked':
+      return 'Sign-in blocked while account was locked';
+    case 'account.locked':
+      return `Account locked for ${d.minutes || 15} minutes after repeated failures`;
+    case 'account.password_changed':
+      return 'Changed own password and signed out other devices';
+    case 'logout':
+      return 'Signed out';
+    case 'access.denied':
+      return `Blocked from ${d.method || ''} ${d.path || ''}`.trim();
+    case 'admin.user_created':
+      return `Created ${d.role || 'staff'} account "${d.username || ''}" with temporary password`;
+    case 'admin.user_updated':
+      return `Updated user "${d.username || ''}" (role: ${d.role || '-'}, active: ${d.isActive ? 'yes' : 'no'})`;
+    case 'admin.user_unlocked':
+      return `Unlocked account "${d.username || ''}"`;
+    case 'admin.user_signed_out':
+      return `Signed out "${d.username || ''}" from all devices`;
+    case 'admin.shop_updated':
+      return `Updated store configuration (${d.name || 'Mamitas’ Kitchen'})`;
+    case 'admin.backup_created':
+      return `Created database backup ${l.entity_id || ''} (${d.size || ''})`.trim();
+    case 'admin.backup_downloaded':
+      return `Downloaded database backup ${l.entity_id || ''}`.trim();
+    case 'session.opened':
+      return `Opened register session with ${formatMoney(d.openingCash || 0)}`;
+    case 'session.closed':
+      return `Closed register session (net sales ${formatMoney(d.netSales || 0)}, diff ${formatMoney(d.difference || 0)})`;
+    default:
+      return target ? `${l.action} on ${target}` : l.action;
+  }
+}
 
 export default function Admin() {
   const [tab, setTab] = useState('users');
@@ -76,19 +128,15 @@ export default function Admin() {
 /* ---------- 1. User & Role Management ---------- */
 function UserManagementTab({ onNotice }) {
   const [users, setUsers] = useState(FALLBACK_USERS);
-  const [backendWired, setBackendWired] = useState(true);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null);
 
   const loadUsers = () => {
     api.get('/admin/users')
       .then((d) => {
-        if (Array.isArray(d?.users)) {
-          setUsers(d.users);
-          setBackendWired(true);
-        }
+        if (Array.isArray(d?.users)) setUsers(d.users);
       })
-      .catch(() => setBackendWired(false));
+      .catch(() => {});
   };
 
   useEffect(() => {
@@ -101,9 +149,27 @@ function UserManagementTab({ onNotice }) {
       await api.patch(`/admin/users/${u.id}`, { isActive: next });
       loadUsers();
       onNotice({ ok: true, message: `${u.fullName} is now ${next ? 'active' : 'deactivated'}.` });
-    } catch {
-      setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, isActive: next } : x)));
-      onNotice({ ok: true, message: `Updated ${u.fullName} in UI preview (connect /api/admin/users to persist).` });
+    } catch (err) {
+      onNotice({ ok: false, message: err.message });
+    }
+  };
+
+  const handleUnlock = async (u) => {
+    try {
+      await api.post(`/admin/users/${u.id}/unlock`);
+      loadUsers();
+      onNotice({ ok: true, message: `Unlocked ${u.fullName}'s account.` });
+    } catch (err) {
+      onNotice({ ok: false, message: err.message });
+    }
+  };
+
+  const handleSignOutEverywhere = async (u) => {
+    try {
+      await api.post(`/admin/users/${u.id}/sign-out`);
+      onNotice({ ok: true, message: `Ended all active sessions for ${u.fullName}.` });
+    } catch (err) {
+      onNotice({ ok: false, message: err.message });
     }
   };
 
@@ -115,12 +181,6 @@ function UserManagementTab({ onNotice }) {
           <Plus size={16} aria-hidden="true" /> Add Staff User
         </button>
       </div>
-
-      {!backendWired && (
-        <div className="info-box">
-          Showing default system accounts. Once we wire <code>/api/admin/users</code> on the backend, changes here will save directly to PostgreSQL.
-        </div>
-      )}
 
       <div className="table-wrap">
         <table className="table">
@@ -144,14 +204,26 @@ function UserManagementTab({ onNotice }) {
                   </StatusBadge>
                 </td>
                 <td>
-                  <StatusBadge tone={u.isActive ? 'ok' : 'danger'}>
-                    {u.isActive ? 'Active' : 'Inactive'}
-                  </StatusBadge>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <StatusBadge tone={u.isActive ? 'ok' : 'danger'}>
+                      {u.isActive ? 'Active' : 'Inactive'}
+                    </StatusBadge>
+                    {u.isLocked && <StatusBadge tone="danger">Locked</StatusBadge>}
+                    {u.mustChangePassword && <StatusBadge tone="warn">Temp password</StatusBadge>}
+                  </div>
                 </td>
                 <td>
                   <div className="actions">
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditing(u)}>
-                      Edit Role / Password
+                      Edit / Reset Password
+                    </button>
+                    {u.isLocked && (
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleUnlock(u)}>
+                        Unlock
+                      </button>
+                    )}
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleSignOutEverywhere(u)}>
+                      Sign out everywhere
                     </button>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => toggleActive(u)}>
                       {u.isActive ? 'Deactivate' : 'Activate'}
@@ -171,12 +243,11 @@ function UserManagementTab({ onNotice }) {
             try {
               await api.post('/admin/users', payload);
               loadUsers();
-              onNotice({ ok: true, message: `Created account for ${payload.fullName}.` });
-            } catch {
-              setUsers((prev) => [...prev, { id: Date.now(), ...payload, isActive: true }]);
-              onNotice({ ok: true, message: `Added ${payload.fullName} in UI preview.` });
+              onNotice({ ok: true, message: `Created ${payload.fullName} with a temporary password.` });
+              setCreating(false);
+            } catch (err) {
+              onNotice({ ok: false, message: err.message });
             }
-            setCreating(false);
           }}
         />
       )}
@@ -189,12 +260,16 @@ function UserManagementTab({ onNotice }) {
             try {
               await api.patch(`/admin/users/${editing.id}`, payload);
               loadUsers();
-              onNotice({ ok: true, message: `Updated ${payload.fullName}.` });
-            } catch {
-              setUsers((prev) => prev.map((x) => (x.id === editing.id ? { ...x, ...payload } : x)));
-              onNotice({ ok: true, message: `Updated ${payload.fullName} in UI preview.` });
+              onNotice({
+                ok: true,
+                message: payload.password
+                  ? `Updated ${payload.fullName} and issued a temporary password (all sessions ended).`
+                  : `Updated ${payload.fullName}.`,
+              });
+              setEditing(null);
+            } catch (err) {
+              onNotice({ ok: false, message: err.message });
             }
-            setEditing(null);
           }}
         />
       )}
@@ -219,7 +294,7 @@ function UserFormModal({ user, onClose, onSave }) {
       return;
     }
     if (!user && form.password.length < 6) {
-      setError('Enter a password with at least 6 characters.');
+      setError('Enter a temporary password with at least 6 characters.');
       return;
     }
     onSave({
@@ -250,8 +325,15 @@ function UserFormModal({ user, onClose, onSave }) {
           </select>
         </div>
         <div className="field">
-          <label htmlFor="u-pass">{user ? 'New password (leave blank to keep current)' : 'Initial password'}</label>
+          <label htmlFor="u-pass">
+            {user ? 'Reset to temporary password (leave blank to keep current)' : 'Temporary password'}
+          </label>
           <input id="u-pass" type="password" value={form.password} onChange={set('password')} />
+          <span className="hint">
+            {user
+              ? 'Setting a new password forces a password change on next sign-in and ends active sessions.'
+              : 'The user must set their own password on first sign-in before using the app.'}
+          </span>
         </div>
         {error && <p className="error" role="alert">{error}</p>}
         <div className="form-actions">
@@ -288,6 +370,7 @@ function SystemConfigTab({ onNotice }) {
             gstRegistered: Boolean(d.shop.gstRegistered),
             gstRate: d.shop.gstRate != null ? String(Number(d.shop.gstRate) * 100) : prev.gstRate,
             gstRegNo: d.shop.gstRegNo ?? prev.gstRegNo,
+            expiryWarningDays: d.shop.expiryWarningDays != null ? String(d.shop.expiryWarningDays) : prev.expiryWarningDays,
           }));
         }
       })
@@ -309,8 +392,8 @@ function SystemConfigTab({ onNotice }) {
         expiryWarningDays: Number(cfg.expiryWarningDays),
       });
       onNotice({ ok: true, message: 'System configuration saved.' });
-    } catch {
-      onNotice({ ok: true, message: 'Configuration updated in UI preview (connect /api/admin/shop to persist).' });
+    } catch (err) {
+      onNotice({ ok: false, message: err.message });
     }
     setBusy(false);
   };
@@ -341,7 +424,12 @@ function SystemConfigTab({ onNotice }) {
 
       <div className="field" style={{ marginTop: 6 }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-          <input type="checkbox" checked={cfg.gstRegistered} onChange={set('gstRegistered')} style={{ width: 18, height: 18, minHeight: 0 }} />
+          <input
+            type="checkbox"
+            checked={cfg.gstRegistered}
+            onChange={set('gstRegistered')}
+            style={{ width: 18, height: 18, minHeight: 0 }}
+          />
           GST Registered (Prices are GST-inclusive)
         </label>
       </div>
@@ -456,23 +544,77 @@ function MenuAdminTab({ onNotice }) {
 /* ---------- 4. Audit Logs & Backups ---------- */
 function AuditAndBackupsTab({ onNotice }) {
   const [logs, setLogs] = useState([]);
-  const [query, setQuery] = useState('');
-  const [backups, setBackups] = useState([
-    { id: 'bk-1', filename: 'before_opening_stock.dump', size: '51.7 KB', createdAt: '2026-11-17T08:00:00Z', status: 'Verified' },
-    { id: 'bk-2', filename: 'before_real_data.dump', size: '51.3 KB', createdAt: '2026-11-16T18:30:00Z', status: 'Verified' },
-  ]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+  const [category, setCategory] = useState('');
+  const [userFilter, setUserFilter] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+
+  const [backups, setBackups] = useState([]);
   const [backingUp, setBackingUp] = useState(false);
 
-  const loadAudit = () => {
-    api.get('/audit?limit=50')
-      .then((d) => {
-        if (Array.isArray(d?.logs)) setLogs(d.logs);
-      })
-      .catch(() => setLogs([]));
+  const fetchLogs = async ({ append = false, beforeId = null } = {}) => {
+    setLoadingLogs(true);
+    const params = new URLSearchParams({ limit: '25' });
+    if (beforeId) params.set('beforeId', String(beforeId));
+    if (category) params.set('category', category);
+    if (userFilter.trim()) params.set('user', userFilter.trim());
+    if (fromDate) params.set('from', fromDate);
+    if (toDate) params.set('to', toDate);
+
+    try {
+      const d = await api.get(`/audit-log?${params.toString()}`);
+      const rows = Array.isArray(d?.entries) ? d.entries : [];
+      setLogs((prev) => (append ? [...prev, ...rows] : rows));
+      setHasMore(Boolean(d?.hasMore));
+    } catch {
+      if (!append) setLogs([]);
+      setHasMore(false);
+    }
+    setLoadingLogs(false);
   };
 
+  const loadBackups = () => {
+    api.get('/admin/backups')
+      .then((d) => {
+        if (Array.isArray(d?.backups)) setBackups(d.backups);
+      })
+      .catch(() => {});
+  };
+
+useEffect(() => {
+    let active = true;
+    const run = async () => {
+      setLoadingLogs(true);
+      const params = new URLSearchParams({ limit: '25' });
+      if (category) params.set('category', category);
+      if (userFilter.trim()) params.set('user', userFilter.trim());
+      if (fromDate) params.set('from', fromDate);
+      if (toDate) params.set('to', toDate);
+
+      try {
+        const d = await api.get(`/audit-log?${params.toString()}`);
+        if (!active) return;
+        const rows = Array.isArray(d?.entries) ? d.entries : [];
+        setLogs(rows);
+        setHasMore(Boolean(d?.hasMore));
+      } catch {
+        if (!active) return;
+        setLogs([]);
+        setHasMore(false);
+      } finally {
+        if (active) setLoadingLogs(false);
+      }
+    };
+    run();
+    return () => {
+      active = false;
+    };
+  }, [category, userFilter, fromDate, toDate]);
+
   useEffect(() => {
-    loadAudit();
+    loadBackups();
   }, []);
 
   const triggerBackup = async () => {
@@ -480,23 +622,34 @@ function AuditAndBackupsTab({ onNotice }) {
     try {
       const res = await api.post('/admin/backups');
       if (res?.backup) setBackups((prev) => [res.backup, ...prev]);
-      onNotice({ ok: true, message: 'Database backup snapshot created.' });
-    } catch {
-      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-      setBackups((prev) => [
-        { id: `bk-${Date.now()}`, filename: `mamitas_backup_${stamp}.dump`, size: '54.2 KB', createdAt: new Date().toISOString(), status: 'Preview' },
-        ...prev,
-      ]);
-      onNotice({ ok: true, message: 'Backup snapshot queued in UI preview (connect /api/admin/backups on backend).' });
+      fetchLogs({ append: false });
+      onNotice({ ok: true, message: `Database backup ${res.backup.filename} created.` });
+    } catch (err) {
+      onNotice({ ok: false, message: err.message });
     }
     setBackingUp(false);
   };
 
-  const filteredLogs = logs.filter((l) => {
-    if (!query.trim()) return true;
-    const text = `${l.action || ''} ${l.actor || l.userName || ''} ${l.details || ''}`.toLowerCase();
-    return text.includes(query.trim().toLowerCase());
-  });
+  const exportLogsCsv = () => {
+    const escape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const headers = ['Timestamp', 'User', 'Action', 'Description', 'Entity', 'IP Address'];
+    const rows = logs.map((l) => [
+      l.created_at,
+      l.username || 'System',
+      l.action,
+      describeAudit(l),
+      l.entity ? `${l.entity}${l.entity_id ? ` #${l.entity_id}` : ''}` : '',
+      l.ip || '',
+    ]);
+    const csv = [headers.map(escape).join(','), ...rows.map((r) => r.map(escape).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `mamitas-activity-log-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div style={{ display: 'grid', gap: 24 }}>
@@ -505,7 +658,7 @@ function AuditAndBackupsTab({ onNotice }) {
           <div>
             <h2>Database Backups</h2>
             <p className="muted" style={{ margin: 0 }}>
-              Create manual PostgreSQL snapshots before bulk menu updates or end-of-month closing.
+              Create manual PostgreSQL snapshots saved under <code>database/backups/</code>.
             </p>
           </div>
           <button type="button" className="btn btn-primary btn-sm" onClick={triggerBackup} disabled={backingUp}>
@@ -521,15 +674,28 @@ function AuditAndBackupsTab({ onNotice }) {
                 <th>Size</th>
                 <th>Created At</th>
                 <th>Status</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
+              {backups.length === 0 && (
+                <tr><td colSpan="5" className="empty">No backup snapshots found yet. Click Create Backup Now to generate one.</td></tr>
+              )}
               {backups.map((b) => (
                 <tr key={b.id}>
                   <td><code>{b.filename}</code></td>
                   <td>{b.size}</td>
                   <td>{fmtDateTime(b.createdAt)}</td>
                   <td><StatusBadge tone="ok">{b.status}</StatusBadge></td>
+                  <td>
+                    <a
+                      href={`/api/admin/backups/${encodeURIComponent(b.filename)}/download`}
+                      download={b.filename}
+                      className="btn btn-secondary btn-sm"
+                    >
+                      <Download size={14} aria-hidden="true" /> Download
+                    </a>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -539,19 +705,56 @@ function AuditAndBackupsTab({ onNotice }) {
 
       <div>
         <div className="section-head" style={{ marginTop: 0 }}>
-          <h2 style={{ flex: 1 }}>System Audit Trail</h2>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={loadAudit}>
-            <RefreshCw size={15} aria-hidden="true" /> Refresh
-          </button>
+          <h2 style={{ flex: 1 }}>Activity Log</h2>
+          <div className="actions">
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => fetchLogs({ append: false })}>
+              <RefreshCw size={15} aria-hidden="true" /> Refresh
+            </button>
+            <button type="button" className="btn btn-primary btn-sm" onClick={exportLogsCsv} disabled={logs.length === 0}>
+              <Download size={15} aria-hidden="true" /> Export CSV
+            </button>
+          </div>
         </div>
 
         <div className="toolbar">
+          <select value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Filter by category">
+            {AUDIT_CATEGORIES.map((c) => (
+              <option key={c.id} value={c.id}>{c.label}</option>
+            ))}
+          </select>
           <input
             type="search"
-            placeholder="Filter by user, action, or entity"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter by username"
+            value={userFilter}
+            onChange={(e) => setUserFilter(e.target.value)}
+            aria-label="Filter by username"
           />
+          <input
+            type="date"
+            value={fromDate}
+            onChange={(e) => setFromDate(e.target.value)}
+            aria-label="From date"
+          />
+          <input
+            type="date"
+            value={toDate}
+            onChange={(e) => setToDate(e.target.value)}
+            aria-label="To date"
+          />
+          {(category || userFilter || fromDate || toDate) && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                setCategory('');
+                setUserFilter('');
+                setFromDate('');
+                setToDate('');
+              }}
+            >
+              Clear filters
+            </button>
+          )}
         </div>
 
         <div className="table-wrap">
@@ -560,29 +763,42 @@ function AuditAndBackupsTab({ onNotice }) {
               <tr>
                 <th>Timestamp</th>
                 <th>User</th>
-                <th>Action</th>
-                <th>Target / Details</th>
+                <th>Event</th>
+                <th>Description</th>
               </tr>
             </thead>
             <tbody>
-              {filteredLogs.length === 0 && (
+              {logs.length === 0 && (
                 <tr>
                   <td colSpan="4" className="empty">
-                    No audit log entries returned yet. We will wire <code>/api/audit</code> in the backend phase.
+                    {loadingLogs ? 'Loading activity log...' : 'No activity log entries match your filters.'}
                   </td>
                 </tr>
               )}
-              {filteredLogs.map((l) => (
+              {logs.map((l) => (
                 <tr key={l.id}>
-                  <td>{fmtDateTime(l.createdAt || l.created_at)}</td>
-                  <td><strong>{l.actor || l.userName || 'System'}</strong></td>
+                  <td>{fmtDateTime(l.created_at)}</td>
+                  <td><strong>{l.username || 'System'}</strong></td>
                   <td><StatusBadge tone="info">{l.action}</StatusBadge></td>
-                  <td>{l.details || l.target || '-'}</td>
+                  <td>{describeAudit(l)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+
+        {hasMore && (
+          <div style={{ marginTop: 14, textAlign: 'center' }}>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={loadingLogs}
+              onClick={() => fetchLogs({ append: true, beforeId: logs[logs.length - 1]?.id })}
+            >
+              {loadingLogs ? 'Loading...' : 'Load more'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

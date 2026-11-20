@@ -100,9 +100,6 @@ export default function InventoryStock() {
         <h1>Inventory Stock</h1>
         <div className="actions">
           <button className="btn btn-primary" onClick={() => setModal({ kind: 'add' })}>+ Add ingredient</button>
-          <button className="btn btn-secondary" onClick={() => setModal({ kind: 'stockin' })}>Stock in</button>
-          <button className="btn btn-secondary" onClick={() => setModal({ kind: 'loss' })}>Record damage</button>
-          <button className="btn btn-secondary" onClick={() => setModal({ kind: 'adjust' })}>Adjust stock</button>
         </div>
       </div>
       <p className="muted">

@@ -30,7 +30,7 @@ function MenuTable({ title, nameLabel, qtyLabel, showCategory, rows, available, 
               <th className="num">{qtyLabel}</th>
               <th className="num">Low-stock level</th>
               <th>Status</th>
-              <th className="num">Expired leftovers</th>
+              <th className="num">Leftovers</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -55,12 +55,8 @@ function MenuTable({ title, nameLabel, qtyLabel, showCategory, rows, available, 
                   </td>
                   <td>
                     <div className="actions">
-                      <button className="btn btn-secondary btn-sm" onClick={() => onAction('stockin', i)}>
-                        {i.type === 'food' ? 'Add servings' : 'Add trays'}
-                      </button>
-                      <button className="btn btn-secondary btn-sm" onClick={() => onAction('loss', i)}>Damage</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => onAction('stockin', i)}> {i.type === 'food' ? 'Add' : 'Add trays'} </button>
                       <button className="btn btn-secondary btn-sm" onClick={() => onAction('adjust', i)}>Adjust</button>
-                      <button className="btn btn-secondary btn-sm" onClick={() => onAction('edit', i)}>Edit</button>
                     </div>
                   </td>
                 </tr>
@@ -143,7 +139,7 @@ export default function MenuStock() {
       </div>
 
       <MenuTable
-        title="Foods" nameLabel="Food" qtyLabel="Servings available today" showCategory
+        title="Foods" nameLabel="Food" qtyLabel="Servings" showCategory
         rows={foods} available={usableStockByItem} expired={expired}
         onAction={onAction} emptyText="No foods found."
       />

@@ -20,8 +20,8 @@ export function OrderProvider({ children }) {
   const refreshInventory = inventory.refresh;
   const { refresh: refreshSession } = useSession();
   const userId = user?.id ?? null;
-  const active = Boolean(user && SALES_ROLES.includes(user.role));
-  const inventoryActive = Boolean(user && STAFF_ROLES.includes(user.role));
+  const active = Boolean(user && !user.mustChangePassword && SALES_ROLES.includes(user.role));
+  const inventoryActive = Boolean(user && !user.mustChangePassword && STAFF_ROLES.includes(user.role));
 
   const [menuItems, setMenuItems] = useState([]);
   const [shop, setShop] = useState(SHOP);

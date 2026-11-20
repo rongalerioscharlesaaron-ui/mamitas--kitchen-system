@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import health from './health.routes.js';
+import admin from './admin.routes.js';
 import auth from './auth.routes.js';
 import auditLog from './audit.routes.js';
 import items from './items.routes.js';
@@ -24,5 +25,6 @@ router.use('/movements', movements);
 router.use('/orders', orders);
 router.use('/sessions', sessions);
 router.use('/dashboard', dashboard);
+router.use('/admin', admin);
 
 export default router;

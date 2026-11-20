@@ -10,8 +10,8 @@ import { fmtDayTime } from '../../utils/time';
 import { formatMoney } from '../../utils/money';
 
 export default function Orders() {
-  const { menuItems, categories, stockOf, refresh } = useOrders();
-  const { session, ready } = useSession();
+const { menuItems, categories, stockOf, refresh } = useOrders();
+  const { session, activeSessions, ready } = useSession();
   const [category, setCategory] = useState('all');
   const [search, setSearch] = useState('');
   const [availableOnly, setAvailableOnly] = useState(false);
@@ -46,6 +46,27 @@ export default function Orders() {
         <div className="page-head">
           <h1>New order</h1>
         </div>
+
+        {activeSessions.length > 0 && (
+          <div className="card" style={{ maxWidth: 520, marginBottom: 18, borderLeft: '4px solid var(--ok)' }}>
+            <h2 style={{ margin: '0 0 6px', fontSize: '1.05rem' }}>Active shift currently open</h2>
+            <p className="muted" style={{ margin: '0 0 10px' }}>
+              Another staff member already has an open register right now. Each user tracks their own drawer—start
+              your own session below if you want to take orders as Owner.
+            </p>
+            <ul className="list" style={{ marginBottom: 0 }}>
+              {activeSessions.map((s) => (
+                <li key={s.id} style={{ padding: '6px 0', borderBottom: 'none' }}>
+                  <span>
+                    <strong>{s.cashier}</strong> · Started at {fmtDayTime(s.openedAt)} · Opening cash{' '}
+                    {formatMoney(s.openingCash)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <OpenSessionForm />
       </div>
     );

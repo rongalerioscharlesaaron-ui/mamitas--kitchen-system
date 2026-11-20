@@ -5,9 +5,8 @@ const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true); // true while we ask the server who is logged in
+  const [loading, setLoading] = useState(true);
 
-  // On page load: does the session cookie still belong to a logged-in user?
   useEffect(() => {
     let cancelled = false;
     api
@@ -24,7 +23,6 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  // If the server says the session ended, go back to the login page
   useEffect(() => {
     setUnauthorizedHandler(() => setUser(null));
     return () => setUnauthorizedHandler(null);
@@ -33,6 +31,16 @@ export function AuthProvider({ children }) {
   const login = async (username, password) => {
     try {
       const data = await api.post('/auth/login', { username, password });
+      setUser(data.user);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, message: err.message };
+    }
+  };
+
+  const changePassword = async (currentPassword, newPassword) => {
+    try {
+      const data = await api.post('/auth/change-password', { currentPassword, newPassword });
       setUser(data.user);
       return { ok: true };
     } catch (err) {
@@ -50,7 +58,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, changePassword, logout }}>
       {children}
     </AuthContext.Provider>
   );

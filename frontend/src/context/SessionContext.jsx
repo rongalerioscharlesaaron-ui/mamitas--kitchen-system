@@ -4,25 +4,32 @@ import { useAuth } from './AuthContext';
 
 const SessionContext = createContext(null);
 
-const SALES_ROLES = ['cashier', 'owner']; // who can sell, so who has a cash drawer
+const SALES_ROLES = ['cashier',]; // who can sell, so who has a cash drawer
 
 export function SessionProvider({ children }) {
   const { user } = useAuth();
   const active = Boolean(user && SALES_ROLES.includes(user.role));
+  const isOwner = user?.role === 'owner';
   const userId = user?.id ?? null;
 
   const [session, setSession] = useState(null);
+  const [activeSessions, setActiveSessions] = useState([]);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
-    const data = await api.get('/sessions/current');
-    setSession(data.session);
-  }, []);
+    const [curr, all] = await Promise.all([
+      api.get('/sessions/current'),
+      isOwner ? api.get('/sessions?date=today').catch(() => ({ sessions: [] })) : Promise.resolve({ sessions: [] }),
+    ]);
+    setSession(curr.session);
+    setActiveSessions((all.sessions || []).filter((s) => s.isOpen));
+  }, [isOwner]);
 
   useEffect(() => {
     let cancelled = false;
     setSession(null);
+    setActiveSessions([]);
     setError('');
     if (!active) {
       setReady(true);
@@ -66,6 +73,7 @@ export function SessionProvider({ children }) {
     try {
       const data = await api.post('/sessions/open', { openingCash });
       setSession(data.session);
+      if (isOwner) await refresh();
       return { ok: true };
     } catch (err) {
       return { ok: false, message: err.message };
@@ -77,6 +85,7 @@ export function SessionProvider({ children }) {
     try {
       const data = await api.post('/sessions/close', { countedCash, note });
       setSession(null);
+      if (isOwner) await refresh();
       return { ok: true, session: data.session };
     } catch (err) {
       return { ok: false, message: err.message };
@@ -84,7 +93,7 @@ export function SessionProvider({ children }) {
   };
 
   return (
-    <SessionContext.Provider value={{ session, ready, error, refresh, openSession, closeSession }}>
+    <SessionContext.Provider value={{ session, activeSessions, ready, error, refresh, openSession, closeSession }}>
       {children}
     </SessionContext.Provider>
   );

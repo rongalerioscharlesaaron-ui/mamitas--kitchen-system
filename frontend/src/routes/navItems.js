@@ -11,9 +11,9 @@ export const NAV_GROUPS = [
     ],
   },
   {
-    title: 'Point of sale',
+    title: 'Point of Sale',
     items: [
-      { label: 'New Order', path: '/orders', icon: ShoppingCart, end: true, roles: ['cashier', 'owner'] },
+      { label: 'New Order', path: '/orders', icon: ShoppingCart, end: true, roles: ['cashier', ] },
       { label: 'Order History', path: '/orders/history', icon: Receipt, roles: ['cashier', 'owner'] },
     ],
   },

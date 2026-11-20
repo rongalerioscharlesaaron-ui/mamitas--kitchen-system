@@ -15,7 +15,7 @@ const toMovement = (m) => ({ ...m, date: m.createdAt, user: m.recordedBy });
 
 export function InventoryProvider({ children }) {
   const { user } = useAuth();
-  const active = Boolean(user && STAFF.includes(user.role));
+  const active = Boolean(user && !user.mustChangePassword && STAFF.includes(user.role));
   const userId = user?.id ?? null;
 
   const [items, setItems] = useState([]);

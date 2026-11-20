@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { LogOut, PanelLeft } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useInventory } from '../context/InventoryContext';
@@ -91,13 +91,13 @@ export default function MainLayout() {
           <div className="topbar-title">Mamitas’ Kitchen Management System</div>
           <div className="topbar-actions">
             <NotificationBell />
-            <div className="profile">
+            <Link to="/account" className="profile" title="My account" style={{ textDecoration: 'none', color: 'inherit' }}>
               <span className="avatar" aria-hidden="true">{initials}</span>
               <span className="profile-text">
                 <strong>{user.name}</strong>
                 <small>{ROLE_LABELS[user.role]}</small>
               </span>
-            </div>
+            </Link>
             <button className="btn btn-secondary btn-sm" onClick={handleLogout}>
               <LogOut size={16} aria-hidden="true" /> Log out
             </button>
