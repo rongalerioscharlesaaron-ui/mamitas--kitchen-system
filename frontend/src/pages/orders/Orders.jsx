@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { RefreshCw, Search, X } from 'lucide-react';
 import { useOrders } from '../../context/OrderContext';
 import { useSession } from '../../context/SessionContext';
 import MenuTile from '../../components/pos/MenuTile';
@@ -9,12 +10,32 @@ import { fmtDayTime } from '../../utils/time';
 import { formatMoney } from '../../utils/money';
 
 export default function Orders() {
-  const { menuItems, categories } = useOrders();
+  const { menuItems, categories, stockOf, refresh } = useOrders();
   const { session, ready } = useSession();
   const [category, setCategory] = useState('all');
   const [search, setSearch] = useState('');
+  const [availableOnly, setAvailableOnly] = useState(false);
   const [paying, setPaying] = useState(false);
   const [lastOrder, setLastOrder] = useState(null);
+
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return menuItems
+      .filter((m) => {
+        if (category !== 'all' && m.category !== category) return false;
+        if (q && !m.name.toLowerCase().includes(q) && !(m.category || '').toLowerCase().includes(q)) {
+          return false;
+        }
+        if (availableOnly && stockOf(m.id) <= 0) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const aOut = stockOf(a.id) <= 0 ? 1 : 0;
+        const bOut = stockOf(b.id) <= 0 ? 1 : 0;
+        if (aOut !== bOut) return aOut - bOut;
+        return a.name.localeCompare(b.name);
+      });
+  }, [menuItems, category, search, availableOnly, stockOf]);
 
   if (!ready) return <p className="muted">Loading...</p>;
 
@@ -30,19 +51,32 @@ export default function Orders() {
     );
   }
 
-  const visible = menuItems.filter(
-    (m) =>
-      (category === 'all' || m.category === category) &&
-      m.name.toLowerCase().includes(search.trim().toLowerCase())
-  );
+  const orderableInView = visible.filter((m) => stockOf(m.id) > 0).length;
 
   return (
     <div className="pos">
       <div className="pos-menu">
         <div className="page-head">
-          <h1>New order</h1>
+          <div>
+            <h1>New order</h1>
+            <p className="muted" style={{ margin: 0 }}>
+              Tap an item to add it to the order · <strong>{orderableInView}</strong> of {visible.length} shown available
+            </p>
+          </div>
+          <div className="actions">
+            <button
+              type="button"
+              className={`chip ${availableOnly ? 'is-active-filter' : ''}`}
+              aria-pressed={availableOnly}
+              onClick={() => setAvailableOnly((prev) => !prev)}
+            >
+              Available only
+            </button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={refresh}>
+              <RefreshCw size={15} aria-hidden="true" /> Refresh
+            </button>
+          </div>
         </div>
-        <p className="muted">Tap an item to add it to the order.</p>
 
         {!session.openedToday && (
           <div className="notice notice-error" role="status">
@@ -63,10 +97,26 @@ export default function Orders() {
         )}
 
         <div className="toolbar">
-          <input
-            type="search" placeholder="Search menu" aria-label="Search menu"
-            value={search} onChange={(e) => setSearch(e.target.value)}
-          />
+          <div className="pos-search-wrap">
+            <Search size={17} className="pos-search-icon" aria-hidden="true" />
+            <input
+              type="search"
+              placeholder="Search menu by name or category"
+              aria-label="Search menu"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {search && (
+              <button
+                type="button"
+                className="pos-search-clear"
+                onClick={() => setSearch('')}
+                aria-label="Clear search"
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="chips" role="group" aria-label="Menu categories">
@@ -84,7 +134,24 @@ export default function Orders() {
         </div>
 
         {visible.length === 0 ? (
-          <p className="order-empty">No menu items match your search.</p>
+          <div className="card" style={{ textAlign: 'center', padding: 28 }}>
+            <p className="muted" style={{ marginBottom: 12 }}>
+              {availableOnly ? 'No available menu items match this filter.' : 'No menu items match your search.'}
+            </p>
+            {(search || availableOnly || category !== 'all') && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
+                  setSearch('');
+                  setAvailableOnly(false);
+                  setCategory('all');
+                }}
+              >
+                Reset filters
+              </button>
+            )}
+          </div>
         ) : (
           <div className="tile-grid">
             {visible.map((m) => (

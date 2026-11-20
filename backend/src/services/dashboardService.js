@@ -3,7 +3,7 @@ import { todaySG } from '../utils/dates.js';
 import { listMovements } from './movementService.js';
 
 const BRIEF = `
-  SELECT o.id, o.order_number, o.total, o.status, o.created_at,
+  SELECT o.id, o.order_number, o.order_type, o.total, o.status, o.created_at,
          COALESCE(SUM(oi.qty), 0)::int AS item_count
     FROM orders o
     LEFT JOIN order_items oi ON oi.order_id = o.id`;
@@ -11,6 +11,7 @@ const BRIEF = `
 const mapBrief = (r) => ({
   id: r.id,
   number: r.order_number,
+  type: r.order_type,
   total: r.total,
   status: r.status,
   createdAt: r.created_at,
@@ -56,9 +57,9 @@ const ALERT_RULE = `qty_remaining > 0
     AND (item_type = 'ingredient' OR expiry_status = 'expired')`;
 
 export async function inventoryDashboard() {
-  const [stock, expiry, alerts, losses, movements] = await Promise.all([
+  const [stock, expiry, alerts, losses, dailyMoves, movements] = await Promise.all([
     pool.query(
-      `SELECT item_id, name, item_type, unit, min_level,
+      `SELECT item_id, name, item_type, category, unit, min_level,
               CASE WHEN item_type = 'ingredient' THEN qty_on_hand ELSE qty_usable END AS stock
          FROM v_item_stock`
     ),
@@ -69,7 +70,7 @@ export async function inventoryDashboard() {
         GROUP BY expiry_status`
     ),
     pool.query(
-      `SELECT batch_code, item_name, item_type, unit, qty_remaining, expiry_date, expiry_status
+      `SELECT batch_code, item_name, item_type, unit, qty_remaining, expiry_date, days_left, expiry_status
          FROM v_batch_status
         WHERE ${ALERT_RULE}
         ORDER BY (expiry_status = 'expired') DESC, expiry_date, batch_code
@@ -79,18 +80,69 @@ export async function inventoryDashboard() {
       `SELECT COUNT(*)::int AS n FROM stock_movements
         WHERE movement_type IN ('DAMAGED', 'SPOILED') AND created_at >= now() - interval '7 days'`
     ),
+    pool.query(
+      `WITH days AS (
+         SELECT generate_series(
+           (now() AT TIME ZONE 'Asia/Singapore')::date - 6,
+           (now() AT TIME ZONE 'Asia/Singapore')::date,
+           interval '1 day'
+         )::date AS day
+       )
+       SELECT to_char(d.day, 'Mon DD') AS label,
+              d.day::text AS date_key,
+              COUNT(m.id) FILTER (WHERE m.movement_type = 'IN')::int AS stock_in,
+              COUNT(m.id) FILTER (WHERE m.movement_type = 'USED')::int AS used,
+              COUNT(m.id) FILTER (WHERE m.movement_type IN ('DAMAGED', 'SPOILED'))::int AS waste
+         FROM days d
+         LEFT JOIN stock_movements m
+           ON (m.created_at AT TIME ZONE 'Asia/Singapore')::date = d.day
+        GROUP BY d.day
+        ORDER BY d.day`
+    ),
     listMovements({ types: [], q: '', limit: 5, offset: 0 }),
   ]);
 
-  const items = stock.rows.map((r) => ({
-    id: r.item_id,
-    name: r.name,
-    type: r.item_type,
-    unit: r.unit,
-    stock: r.stock,
-    minLevel: r.min_level,
-    status: r.stock <= 0 ? 'out' : r.stock <= r.min_level ? 'low' : 'in',
-  }));
+  const items = stock.rows.map((r) => {
+    const qty = Number(r.stock);
+    const min = Number(r.min_level);
+    return {
+      id: r.item_id,
+      name: r.name,
+      type: r.item_type,
+      category: r.category,
+      unit: r.unit,
+      stock: qty,
+      minLevel: min,
+      status: qty <= 0 ? 'out' : qty <= min ? 'low' : 'in',
+    };
+  });
+
+  const summarize = (list) => ({
+    total: list.length,
+    inStock: list.filter((i) => i.status === 'in').length,
+    low: list.filter((i) => i.status === 'low').length,
+    out: list.filter((i) => i.status === 'out').length,
+  });
+
+  const ingredients = items.filter((i) => i.type === 'ingredient');
+  const menuItems = items.filter((i) => i.type !== 'ingredient');
+
+  const categoryMap = new Map();
+  for (const item of items) {
+    if (!categoryMap.has(item.category)) {
+      categoryMap.set(item.category, { category: item.category, total: 0, inStock: 0, low: 0, out: 0 });
+    }
+    const entry = categoryMap.get(item.category);
+    entry.total += 1;
+    if (item.status === 'in') entry.inStock += 1;
+    else if (item.status === 'low') entry.low += 1;
+    else entry.out += 1;
+  }
+
+  const categories = [...categoryMap.values()].sort(
+    (a, b) => (b.out + b.low) - (a.out + a.low) || a.category.localeCompare(b.category)
+  );
+
   const lowOrOut = items
     .filter((i) => i.status !== 'in')
     .sort((a, b) => (a.status === b.status ? a.name.localeCompare(b.name) : a.status === 'out' ? -1 : 1));
@@ -99,10 +151,23 @@ export async function inventoryDashboard() {
 
   return {
     totalItems: items.length,
-    ingredientCount: items.filter((i) => i.type === 'ingredient').length,
-    menuItemCount: items.filter((i) => i.type !== 'ingredient').length,
+    ingredientCount: ingredients.length,
+    menuItemCount: menuItems.length,
+    stockHealth: {
+      overall: summarize(items),
+      ingredients: summarize(ingredients),
+      menu: summarize(menuItems),
+    },
+    categories,
+    dailyMovements: dailyMoves.rows.map((r) => ({
+      date: r.date_key,
+      label: r.label,
+      in: r.stock_in,
+      used: r.used,
+      waste: r.waste,
+    })),
     lowOrOutCount: lowOrOut.length,
-    lowOrOut: lowOrOut.slice(0, 5),
+    lowOrOut: lowOrOut.slice(0, 6),
     expiredCount: count('expired'),
     soonCount: count('soon'),
     expiryAlerts: alerts.rows.map((r) => ({
@@ -112,6 +177,7 @@ export async function inventoryDashboard() {
       unit: r.unit,
       qtyRemaining: r.qty_remaining,
       expiryDate: r.expiry_date,
+      daysLeft: r.days_left,
       status: r.expiry_status,
     })),
     losses7d: losses.rows[0].n,
