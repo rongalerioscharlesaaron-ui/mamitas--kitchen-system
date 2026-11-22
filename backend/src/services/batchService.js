@@ -234,3 +234,36 @@ export async function adjustBatch(user, rawBatchId, body) {
     };
   });
 }
+
+// Kitchen and owner can correct a batch's expiry date (only for perishable ingredients)
+export async function updateBatchExpiry(user, rawBatchId, body) {
+  const b = body ?? {};
+  const batchId = parseId(rawBatchId, 'batch id');
+  const expiry = date(b.expiry, 'Expiry date');
+
+  return withTransaction(async (db) => {
+    const { rows } = await db.query(
+      `SELECT b.id, b.item_id, b.batch_code, b.expiry_date, i.name, i.item_type, i.has_expiry
+         FROM inventory_batches b
+         JOIN items i ON i.id = b.item_id
+        WHERE b.id = $1
+          FOR UPDATE OF b`,
+      [batchId]
+    );
+    const batch = rows[0];
+    if (!batch) throw notFound('Batch not found.');
+    if (batch.item_type !== 'ingredient' || !batch.has_expiry) {
+      throw badRequest(`${batch.name} does not track an expiry date.`);
+    }
+
+    await db.query('UPDATE inventory_batches SET expiry_date = $2 WHERE id = $1', [batchId, expiry]);
+
+    return {
+      batchId,
+      batchCode: batch.batch_code,
+      itemName: batch.name,
+      from: batch.expiry_date,
+      to: expiry,
+    };
+  });
+}

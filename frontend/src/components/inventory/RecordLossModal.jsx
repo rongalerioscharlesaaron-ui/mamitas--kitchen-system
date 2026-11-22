@@ -1,16 +1,21 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Modal from '../Modal';
+import SearchableItemInput from './SearchableItemInput';
 import { useInventory } from '../../context/InventoryContext';
 import { expiryStatus, fmtDate } from '../../utils/dates';
 
-const GROUPS = [
-  ['ingredient', 'Ingredients'],
-  ['food', 'Foods'],
-  ['food_tray', 'Food trays'],
-];
+const ORDER = { ingredient: 0, food: 1, food_tray: 2 };
 
 export default function RecordLossModal({ defaultItemId = '', types = null, onClose, onDone }) {
   const { items, batches, usableStockByItem, recordLoss, recordMenuLoss } = useInventory();
+
+  const selectableItems = useMemo(
+    () =>
+      items
+        .filter((i) => !types || types.includes(i.type))
+        .sort((a, b) => (ORDER[a.type] ?? 9) - (ORDER[b.type] ?? 9) || a.name.localeCompare(b.name)),
+    [items, types]
+  );
 
   const batchesOf = (itemId) =>
     batches
@@ -39,8 +44,7 @@ export default function RecordLossModal({ defaultItemId = '', types = null, onCl
   const available = isMenu ? usableStockByItem[item.id] || 0 : batch?.qty;
   const whole = isMenu;
 
-  const onItem = (e) => {
-    const itemId = e.target.value;
+  const onItemChange = (itemId) => {
     const chosen = items.find((i) => i.id === Number(itemId));
     const options = chosen && chosen.type === 'ingredient' ? batchesOf(itemId) : [];
     setForm({ ...form, itemId, batchId: options.length === 1 ? String(options[0].id) : '', qty: '' });
@@ -71,23 +75,15 @@ export default function RecordLossModal({ defaultItemId = '', types = null, onCl
   return (
     <Modal title="Record damaged or spoiled goods" onClose={onClose}>
       <form onSubmit={submit}>
-        <div className="field">
-          <label htmlFor="rl-item">1. Item</label>
-          <select id="rl-item" value={form.itemId} onChange={onItem}>
-            <option value="">Select item</option>
-            {GROUPS.filter(([t]) => !types || types.includes(t)).map(([t, label]) => {
-              const group = items.filter((i) => i.type === t);
-              if (group.length === 0) return null;
-              return (
-                <optgroup key={t} label={label}>
-                  {group.map((i) => (
-                    <option key={i.id} value={i.id}>{i.name}</option>
-                  ))}
-                </optgroup>
-              );
-            })}
-          </select>
-        </div>
+        <SearchableItemInput
+          id="rl-item"
+          label="1. Item"
+          items={selectableItems}
+          value={form.itemId}
+          onChange={onItemChange}
+          placeholder="Type item name (e.g. Ampalaya, Flour)..."
+          autoFocus={!defaultItemId}
+        />
 
         {isMenu ? (
           <div className="info-box">

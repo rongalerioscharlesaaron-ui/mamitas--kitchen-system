@@ -226,13 +226,23 @@ export function InventoryProvider({ children }) {
     });
   };
 
+  // Updates a batch's expiry date
+  const updateBatchExpiry = ({ batchId, expiry }) => {
+    if (!batchId) return Promise.resolve(fail('Choose a batch.'));
+    if (!expiry) return Promise.resolve(fail('Enter an expiry date.'));
+    return run(async () => {
+      const { result } = await api.patch(`/batches/${batchId}`, { expiry });
+      return `Updated expiry date of ${result.itemName} (batch ${result.batchCode}) to ${result.to}.`;
+    });
+  };
+
   return (
     <InventoryContext.Provider
       value={{
         items, batches, movements, stockByItem, usableStockByItem, itemMap, batchMap,
         ready, error, refresh,
         addIngredient, addItem, updateMenuItem, addStock, recordLoss, recordMenuLoss,
-        writeOffBatch, writeOffExpiredMenu, adjustBatch, adjustMenuStock,
+        writeOffBatch, writeOffExpiredMenu, adjustBatch, adjustMenuStock, updateBatchExpiry,
       }}
     >
       {children}

@@ -10,7 +10,7 @@ import { fmtDayTime } from '../../utils/time';
 import { formatMoney } from '../../utils/money';
 
 export default function Orders() {
-const { menuItems, categories, stockOf, refresh } = useOrders();
+  const { menuItems, categories, stockOf, refresh } = useOrders();
   const { session, activeSessions, ready } = useSession();
   const [category, setCategory] = useState('all');
   const [search, setSearch] = useState('');

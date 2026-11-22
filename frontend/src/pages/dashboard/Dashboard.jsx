@@ -1,6 +1,14 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { RefreshCw, Boxes, UtensilsCrossed, CalendarClock, TriangleAlert, ShoppingCart, Receipt,} from 'lucide-react';
+import {
+  RefreshCw,
+  Boxes,
+  UtensilsCrossed,
+  CalendarClock,
+  TriangleAlert,
+  ShoppingCart,
+  Receipt,
+} from 'lucide-react';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useOrders } from '../../context/OrderContext';
@@ -11,6 +19,9 @@ import StatusBadge from '../../components/StatusBadge';
 import SessionCard from '../../components/session/SessionCard';
 import OpenSessionForm from '../../components/session/OpenSessionForm';
 import CloseSessionModal from '../../components/session/CloseSessionModal';
+import CashierMenuReadiness from '../../components/dashboard/CashierMenuReadiness';
+import StockHealthChart from '../../components/dashboard/StockHealthChart';
+import MovementActivityChart from '../../components/dashboard/MovementActivityChart';
 import { MOVE_LABEL, MOVE_TONE, EXPIRY_INFO } from '../../utils/inventory';
 import { fmtDate, fmtDateTime } from '../../utils/dates';
 import { fmtDayTime } from '../../utils/time';
@@ -30,7 +41,6 @@ const STOCK_BADGE = {
 };
 const itemsText = (n) => `${n} ${n === 1 ? 'item' : 'items'}`;
 
-// Shows a loading text or an error until the data has arrived
 function Gate({ state, children }) {
   if (!state.data) {
     return state.error ? (
@@ -89,62 +99,6 @@ function RecentOrders({ orders }) {
 }
 
 /* ---------- Cashier ---------- */
-function CashierMenuReadiness({ menuItems }) {
-  const total = menuItems.length;
-  const available = menuItems.filter((i) => i.status === 'in').length;
-  const low = menuItems.filter((i) => i.status === 'low').length;
-  const out = menuItems.filter((i) => i.status === 'out').length;
-  const pct = (n) => (total > 0 ? Math.round((n / total) * 100) : 0);
-
-  const catMap = new Map();
-  for (const item of menuItems) {
-    const key = item.category || 'Uncategorized';
-    if (!catMap.has(key)) catMap.set(key, { name: key, total: 0, ready: 0 });
-    const entry = catMap.get(key);
-    entry.total += 1;
-    if (item.status !== 'out') entry.ready += 1;
-  }
-  const cats = [...catMap.values()];
-
-  return (
-    <div className="card panel">
-      <div className="chart-head">
-        <div>
-          <h2>Menu Availability</h2>
-          <p className="chart-sub">Live dish &amp; tray readiness for counter orders</p>
-        </div>
-        <div className="chart-legend">
-          <span><i className="dot dot-ok" /> Ready ({available})</span>
-          <span><i className="dot dot-warn" /> Low ({low})</span>
-          <span><i className="dot dot-danger" /> Sold out ({out})</span>
-        </div>
-      </div>
-
-      <div className="stacked-track" role="img" aria-label={`Menu availability: ${available} ready, ${low} low, ${out} out`}>
-        {available > 0 && <div className="seg seg-ok" style={{ width: `${pct(available)}%` }} />}
-        {low > 0 && <div className="seg seg-warn" style={{ width: `${pct(low)}%` }} />}
-        {out > 0 && <div className="seg seg-danger" style={{ width: `${Math.max(0, 100 - pct(available) - pct(low))}%` }} />}
-      </div>
-
-      {cats.length > 0 && (
-        <div className="cat-grid" style={{ marginTop: 14 }}>
-          {cats.map((c) => {
-            const allOut = c.ready === 0;
-            return (
-              <div className="cat-chip" key={c.name}>
-                <span className="cat-name">{c.name}</span>
-                <span className={`cat-stat ${allOut ? 'is-alert' : 'is-ok'}`}>
-                  {c.ready} of {c.total} orderable
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function CashierOverview({ user }) {
   const sales = useAutoLoad(() => api.get('/dashboard/sales'), []);
   const { menuItems, refresh: refreshMenu } = useOrders();
@@ -318,7 +272,7 @@ const resultBadge = (s) => {
   );
 };
 
-function SessionsToday({ sessions }) {
+function SessionsToday({ sessions, onCloseSession }) {
   const onShift = sessions.filter((s) => s.isOpen);
   return (
     <>
@@ -339,11 +293,12 @@ function SessionsToday({ sessions }) {
               <th className="num">Expected cash</th>
               <th className="num">Counted cash</th>
               <th>Result</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {sessions.length === 0 && (
-              <tr><td colSpan="8" className="empty">No sessions today.</td></tr>
+              <tr><td colSpan="9" className="empty">No sessions today.</td></tr>
             )}
             {sessions.map((s) => (
               <tr key={s.id}>
@@ -355,6 +310,19 @@ function SessionsToday({ sessions }) {
                 <td className="num">{formatMoney(s.expectedCash)}</td>
                 <td className="num">{s.isOpen ? '-' : formatMoney(s.countedCash)}</td>
                 <td>{resultBadge(s)}</td>
+                <td>
+                  {s.isOpen ? (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => onCloseSession(s)}
+                    >
+                      Close session
+                    </button>
+                  ) : (
+                    <span className="muted">-</span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -368,11 +336,19 @@ function OwnerOverview() {
   const sales = useAutoLoad(() => api.get('/dashboard/sales'), []);
   const sessions = useAutoLoad(() => api.get('/sessions?date=today'), []);
   const batches = useAutoLoad(() => api.get('/batches?inStock=true'), []);
+  const { refresh: refreshSession } = useSession();
+  const [closingSession, setClosingSession] = useState(null);
 
   const refreshAll = () => {
     sales.reload();
     sessions.reload();
     batches.reload();
+    refreshSession();
+  };
+
+  const handleCloseModalDone = () => {
+    setClosingSession(null);
+    refreshAll();
   };
 
   return (
@@ -455,7 +431,13 @@ function OwnerOverview() {
       <div className="section-head">
         <h2>Live cashier sessions today</h2>
       </div>
-      <Gate state={sessions}>{(d) => <SessionsToday sessions={d.sessions} />}</Gate>
+      <Gate state={sessions}>
+        {(d) => <SessionsToday sessions={d.sessions} onCloseSession={setClosingSession} />}
+      </Gate>
+
+      {closingSession && (
+        <CloseSessionModal session={closingSession} onClose={handleCloseModalDone} />
+      )}
 
       <div className="section-head">
         <h2>Active stock batches</h2>
@@ -483,7 +465,7 @@ function OwnerOverview() {
                   )}
                   {list.map((row) => (
                     <tr key={row.id}>
-                      <td className="batch-id">{row.batchCode}</td>
+                      <td className="batch-id">{row.code || row.batchCode || '-'}</td>
                       <td>{row.itemName}</td>
                       <td>{row.category}</td>
                       <td className="num">{row.qtyRemaining} {row.unit}</td>
@@ -540,185 +522,6 @@ function KitchenOverview({ user }) {
 
       <InventoryContent />
     </section>
-  );
-}
-
-/* ---------- Statistical Graphs ---------- */
-function StockHealthChart({ health, categories }) {
-  const rows = [
-    { key: 'overall', label: 'All Inventory', data: health.overall },
-    { key: 'ingredients', label: 'Ingredients', data: health.ingredients },
-    { key: 'menu', label: 'Menu Items', data: health.menu },
-  ];
-
-  const pct = (part, total) => (total > 0 ? Math.round((part / total) * 100) : 0);
-
-  return (
-    <div className="card panel">
-      <div className="chart-head">
-        <div>
-          <h2>Stock Health Breakdown</h2>
-          <p className="chart-sub">Availability across ingredients and daily menu items</p>
-        </div>
-        <div className="chart-legend">
-          <span><i className="dot dot-ok" /> In stock</span>
-          <span><i className="dot dot-warn" /> Low</span>
-          <span><i className="dot dot-danger" /> Out</span>
-        </div>
-      </div>
-
-      <div className="health-bars">
-        {rows.map(({ key, label, data }) => {
-          const okPct = pct(data.inStock, data.total);
-          const lowPct = pct(data.low, data.total);
-          const outPct = Math.max(0, 100 - okPct - lowPct);
-          return (
-            <div className="health-row" key={key}>
-              <div className="health-meta">
-                <strong>{label}</strong>
-                <span>
-                  {data.inStock} ok · {data.low} low · {data.out} out ({data.total})
-                </span>
-              </div>
-              <div className="stacked-track" role="img" aria-label={`${label}: ${data.inStock} in stock, ${data.low} low, ${data.out} out`}>
-                {data.inStock > 0 && (
-                  <div className="seg seg-ok" style={{ width: `${okPct}%` }} title={`In stock: ${data.inStock}`} />
-                )}
-                {data.low > 0 && (
-                  <div className="seg seg-warn" style={{ width: `${lowPct}%` }} title={`Low stock: ${data.low}`} />
-                )}
-                {data.out > 0 && (
-                  <div className="seg seg-danger" style={{ width: `${outPct}%` }} title={`Out of stock: ${data.out}`} />
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {categories?.length > 0 && (
-        <div className="cat-breakdown">
-          <div className="cat-title">By Category (Attention Needed)</div>
-          <div className="cat-grid">
-            {categories.map((c) => {
-              const alerts = c.low + c.out;
-              return (
-                <div className="cat-chip" key={c.category}>
-                  <span className="cat-name">{c.category}</span>
-                  <span className={`cat-stat ${alerts > 0 ? 'is-alert' : 'is-ok'}`}>
-                    {alerts > 0 ? `${alerts} of ${c.total} low/out` : `${c.total}/${c.total} stocked`}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MovementActivityChart({ days }) {
-  const maxVal = Math.max(1, ...days.map((d) => Math.max(d.in, d.used, d.waste)));
-  const totalIn = days.reduce((s, d) => s + d.in, 0);
-  const totalUsed = days.reduce((s, d) => s + d.used, 0);
-  const totalWaste = days.reduce((s, d) => s + d.waste, 0);
-  const totalMoves = totalIn + totalUsed + totalWaste;
-  const wasteRate = totalMoves > 0 ? Math.round((totalWaste / totalMoves) * 100) : 0;
-  const avgPerDay = (totalMoves / Math.max(1, days.length)).toFixed(1);
-
-  const peakDay = days.reduce((best, curr) => {
-    const currSum = curr.in + curr.used + curr.waste;
-    const bestSum = best ? best.in + best.used + best.waste : -1;
-    return currSum > bestSum ? curr : best;
-  }, null);
-  const peakSum = peakDay ? peakDay.in + peakDay.used + peakDay.waste : 0;
-
-  return (
-    <div className="card panel activity-card">
-      <div>
-        <div className="chart-head">
-          <div>
-            <h2>7-Day Stock Activity</h2>
-            <p className="chart-sub">Daily count of stock-ins, kitchen usage, and waste entries</p>
-          </div>
-          <div className="chart-legend">
-            <span><i className="dot dot-ok" /> In ({totalIn})</span>
-            <span><i className="dot dot-info" /> Used ({totalUsed})</span>
-            <span><i className="dot dot-danger" /> Waste ({totalWaste})</span>
-          </div>
-        </div>
-
-        <div className="bar-chart" role="img" aria-label="7-day stock movement bar chart">
-          {days.map((d) => (
-            <div className="bar-col" key={d.date}>
-              <div className="bar-group">
-                <div
-                  className="bar bar-ok"
-                  style={{ height: `${Math.max(d.in > 0 ? 8 : 2, Math.round((d.in / maxVal) * 100))}%` }}
-                  title={`${d.label} Stock In: ${d.in}`}
-                >
-                  {d.in > 0 && <span>{d.in}</span>}
-                </div>
-                <div
-                  className="bar bar-info"
-                  style={{ height: `${Math.max(d.used > 0 ? 8 : 2, Math.round((d.used / maxVal) * 100))}%` }}
-                  title={`${d.label} Used: ${d.used}`}
-                >
-                  {d.used > 0 && <span>{d.used}</span>}
-                </div>
-                <div
-                  className="bar bar-danger"
-                  style={{ height: `${Math.max(d.waste > 0 ? 8 : 2, Math.round((d.waste / maxVal) * 100))}%` }}
-                  title={`${d.label} Damaged/Spoiled: ${d.waste}`}
-                >
-                  {d.waste > 0 && <span>{d.waste}</span>}
-                </div>
-              </div>
-              <span className="bar-label">{d.label}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="activity-foot">
-        <div className="activity-kpis">
-          <div className="activity-kpi">
-            <span className="activity-kpi-label">7-Day Total</span>
-            <strong className="activity-kpi-val">{totalMoves}</strong>
-          </div>
-          <div className="activity-kpi">
-            <span className="activity-kpi-label">Daily Avg</span>
-            <strong className="activity-kpi-val">{avgPerDay}</strong>
-          </div>
-          <div className="activity-kpi">
-            <span className="activity-kpi-label">Waste Share</span>
-            <strong className={`activity-kpi-val ${wasteRate >= 25 ? 'is-danger' : ''}`}>{wasteRate}%</strong>
-          </div>
-          <div className="activity-kpi">
-            <span className="activity-kpi-label">Busiest Day</span>
-            <strong className="activity-kpi-val">
-              {peakSum > 0 ? `${peakDay.label} (${peakSum})` : 'None'}
-            </strong>
-          </div>
-        </div>
-
-        <div className="activity-days-list" aria-label="Daily movement totals">
-          {days.map((d) => {
-            const sum = d.in + d.used + d.waste;
-            return (
-              <div className="activity-day-row" key={d.date}>
-                <span className="activity-day-name">{d.label}</span>
-                <span className="activity-day-counts">
-                  <em className="c-in">+{d.in}</em> · <em className="c-used">{d.used} used</em> · <em className="c-waste">{d.waste} waste</em>
-                </span>
-                <strong className="activity-day-total">{sum}</strong>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
   );
 }
 

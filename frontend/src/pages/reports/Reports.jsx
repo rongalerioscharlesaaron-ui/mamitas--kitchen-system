@@ -3,11 +3,12 @@ import { Download, RefreshCw, TrendingUp, Boxes, TriangleAlert, Award } from 'lu
 import { api } from '../../api/client';
 import { useAutoLoad } from '../../hooks/useAutoLoad';
 import { useInventory } from '../../context/InventoryContext';
-import StatCard from '../../components/StatCard';
-import StatusBadge from '../../components/StatusBadge';
-import { MOVE_LABEL, MOVE_TONE, TYPE_LABEL, stockStatus } from '../../utils/inventory';
-import { fmtDate, fmtDateTime } from '../../utils/dates';
-import { formatMoney } from '../../utils/money';
+import SalesReportTab from '../../components/reports/SalesReportTab';
+import InventoryUsageReportTab from '../../components/reports/InventoryUsageReportTab';
+import WasteLossReportTab from '../../components/reports/WasteLossReportTab';
+import PerformanceReportTab from '../../components/reports/PerformanceReportTab';
+import { buildTimeBuckets } from '../../components/reports/reportCharts';
+import { MOVE_LABEL, TYPE_LABEL } from '../../utils/inventory';
 
 const TABS = [
   { id: 'sales', label: 'Sales & Financial', icon: TrendingUp },
@@ -23,9 +24,9 @@ const RANGES = [
   { id: 'all', label: 'All Time', days: null },
 ];
 
-function downloadCsv(filename, headers, rows) {
+function downloadCsv(filename, rows) {
   const escape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const csv = [headers.map(escape).join(','), ...rows.map((r) => r.map(escape).join(','))].join('\n');
+  const csv = rows.map((r) => r.map(escape).join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -41,18 +42,19 @@ export default function Reports() {
 
   const sales = useAutoLoad(() => api.get('/dashboard/sales'), []);
   const invDash = useAutoLoad(() => api.get('/dashboard/inventory'), []);
-  const sessions = useAutoLoad(() => api.get('/sessions?date=today'), []);
-  const ordersRes = useAutoLoad(() => api.get('/orders?limit=200').catch(() => ({ orders: [] })), []);
+  const sessionsRes = useAutoLoad(() => api.get('/sessions').catch(() => ({ sessions: [] })), []);
+  const ordersRes = useAutoLoad(() => api.get('/orders?limit=500').catch(() => ({ orders: [] })), []);
   const { items, batches, movements, refresh: refreshInv } = useInventory();
 
+  const activeRange = RANGES.find((r) => r.id === range) || RANGES[1];
+
   const cutoff = useMemo(() => {
-    const found = RANGES.find((r) => r.id === range);
-    if (!found?.days) return null;
+    if (!activeRange.days) return null;
     const d = new Date();
     d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - (found.days - 1));
+    d.setDate(d.getDate() - (activeRange.days - 1));
     return d;
-  }, [range]);
+  }, [activeRange]);
 
   const filteredMovements = useMemo(() => {
     if (!cutoff) return movements;
@@ -65,43 +67,253 @@ export default function Reports() {
     return list.filter((o) => new Date(o.createdAt || o.created_at) >= cutoff);
   }, [ordersRes.data, cutoff]);
 
+  const filteredSessions = useMemo(() => {
+    const list = sessionsRes.data?.sessions || [];
+    if (!cutoff) return list;
+    return list.filter((s) => new Date(s.openedAt || s.opened_at) >= cutoff);
+  }, [sessionsRes.data, cutoff]);
+
   const handleRefresh = () => {
     sales.reload();
     invDash.reload();
-    sessions.reload();
+    sessionsRes.reload();
     ordersRes.reload();
     refreshInv();
   };
 
   const handleExport = () => {
+    const exportedAt = new Date().toISOString();
+
     if (tab === 'sales') {
-      const list = filteredOrders.length ? filteredOrders : (sales.data?.recentOrders || []);
-      downloadCsv(
-        `mamitas-sales-report-${range}.csv`,
+      const s = sales.data || { todaySales: 0, todayOrders: 0, averageOrder: 0 };
+      const completed = filteredOrders.filter((o) => o.status === 'completed');
+      const grossSales =
+        range === 'today' && completed.length === 0 && Number(s.todaySales) > 0
+          ? Number(s.todaySales)
+          : completed.reduce((sum, o) => sum + Number(o.total || 0), 0);
+      const completedCount =
+        range === 'today' && completed.length === 0 && Number(s.todayOrders) > 0
+          ? Number(s.todayOrders)
+          : completed.length;
+      const avgTicket =
+        completedCount > 0 ? grossSales / completedCount : range === 'today' ? Number(s.averageOrder || 0) : 0;
+
+      const cashTotal = filteredSessions.reduce((sum, x) => sum + Number(x.cashSales || 0), 0);
+      const paynowTotal = filteredSessions.reduce((sum, x) => sum + Number(x.paynowSales || 0), 0);
+      const cardTotal = filteredSessions.reduce((sum, x) => sum + Number(x.cardSales || 0), 0);
+      const buckets = buildTimeBuckets(range, completed, (o) => o.createdAt || o.created_at, (o) => o.total);
+
+      const rows = [
+        ['Report Category', 'Sales & Financial', 'Timeline', activeRange.label, 'Exported At', exportedAt],
+        [],
+        ['SUMMARY METRICS'],
+        ['Metric', 'Value'],
+        ['Gross Sales', grossSales.toFixed(2)],
+        ['Completed Orders', completedCount],
+        ['Average Ticket', avgTicket.toFixed(2)],
+        ['Sessions in Period', filteredSessions.length],
+        ['Open Sessions', filteredSessions.filter((x) => x.isOpen).length],
+        [],
+        ['PAYMENT CHANNEL MIX'],
+        ['Channel', 'Amount'],
+        ['Cash', cashTotal.toFixed(2)],
+        ['PayNow', paynowTotal.toFixed(2)],
+        ['Card', cardTotal.toFixed(2)],
+        [],
+        ['SALES TREND BUCKETS'],
+        ['Period Bucket', 'Revenue', 'Completed Orders'],
+        ...buckets.map((b) => [b.label, b.value.toFixed(2), b.count]),
+        [],
+        ['ORDERS IN PERIOD'],
         ['Order #', 'Type', 'Status', 'Total', 'Created At'],
-        list.map((o) => [o.number || o.order_number, o.type || o.order_type || '-', o.status, o.total, o.createdAt || o.created_at])
-      );
-    } else if (tab === 'inventory') {
-      downloadCsv(
-        `mamitas-inventory-report-${range}.csv`,
-        ['Item', 'Type', 'Category', 'On Hand', 'Usable', 'Unit', 'Min Level', 'Unit Price'],
-        items.map((i) => [i.name, TYPE_LABEL[i.type], i.category, i.qtyOnHand, i.qtyUsable, i.unit, i.minLevel, i.price ?? 0])
-      );
-    } else if (tab === 'waste') {
-      const losses = filteredMovements.filter((m) => m.type === 'DAMAGED' || m.type === 'SPOILED');
-      downloadCsv(
-        `mamitas-waste-report-${range}.csv`,
-        ['Date', 'Item', 'Batch', 'Type', 'Qty', 'Unit', 'Reason', 'Recorded By'],
-        losses.map((m) => [m.createdAt, m.itemName, m.batchCode, MOVE_LABEL[m.type], m.qty, m.unit, m.reason, m.recordedBy])
-      );
-    } else {
-      const top = sales.data?.topSellers || [];
-      downloadCsv(
-        `mamitas-performance-report-${range}.csv`,
-        ['Rank', 'Menu Item', 'Units Sold'],
-        top.map((t, idx) => [idx + 1, t.name, t.qty])
-      );
+        ...filteredOrders.map((o) => [
+          o.number || o.order_number,
+          o.type || o.order_type || '-',
+          o.status,
+          Number(o.total || 0).toFixed(2),
+          o.createdAt || o.created_at,
+        ]),
+      ];
+      downloadCsv(`mamitas-sales-report-${range}.csv`, rows);
+      return;
     }
+
+    if (tab === 'inventory') {
+      const inCount = filteredMovements.filter((m) => m.type === 'IN').length;
+      const usedCount = filteredMovements.filter((m) => m.type === 'USED').length;
+      const adjCount = filteredMovements.filter((m) => m.type === 'ADJUSTMENT').length;
+      const menuValue = items
+        .filter((i) => i.type !== 'ingredient')
+        .reduce((sum, i) => sum + Number(i.qtyUsable || 0) * Number(i.price || 0), 0);
+
+      const usedMap = new Map();
+      filteredMovements
+        .filter((m) => m.type === 'USED')
+        .forEach((m) => {
+          const prev = usedMap.get(m.itemName) || { name: m.itemName, unit: m.unit, qty: 0, count: 0 };
+          prev.qty += Number(m.qty || 0);
+          prev.count += 1;
+          usedMap.set(m.itemName, prev);
+        });
+      const topUsed = Array.from(usedMap.values()).sort((a, b) => b.count - a.count || b.qty - a.qty);
+
+      const rows = [
+        ['Report Category', 'Inventory & Usage', 'Timeline', activeRange.label, 'Exported At', exportedAt],
+        [],
+        ['MOVEMENT & STOCK SUMMARY'],
+        ['Metric', 'Value'],
+        ['Stock-In Entries', inCount],
+        ['Usage Entries', usedCount],
+        ['Stock Adjustments', adjCount],
+        ['Ready Menu Retail Value', menuValue.toFixed(2)],
+        [],
+        ['MOST CONSUMED ITEMS (PERIOD)'],
+        ['Item', 'Total Used Qty', 'Unit', 'Deduction Count'],
+        ...topUsed.map((u) => [u.name, u.qty, u.unit, u.count]),
+        [],
+        ['CURRENT INVENTORY SNAPSHOT'],
+        ['Item', 'Type', 'Category', 'On Hand', 'Usable', 'Unit', 'Min Level', 'Unit Price'],
+        ...items.map((i) => [
+          i.name,
+          TYPE_LABEL[i.type],
+          i.category,
+          i.qtyOnHand,
+          i.qtyUsable,
+          i.unit,
+          i.minLevel,
+          i.price ?? 0,
+        ]),
+        [],
+        ['STOCK MOVEMENTS IN PERIOD'],
+        ['Date', 'Item', 'Batch', 'Movement', 'Qty', 'Unit', 'Reason', 'Recorded By'],
+        ...filteredMovements.map((m) => [
+          m.createdAt || m.date,
+          m.itemName,
+          m.batchCode || '-',
+          MOVE_LABEL[m.type] || m.type,
+          m.qty,
+          m.unit,
+          m.reason || '',
+          m.recordedBy || m.user || '',
+        ]),
+      ];
+      downloadCsv(`mamitas-inventory-report-${range}.csv`, rows);
+      return;
+    }
+
+    if (tab === 'waste') {
+      const losses = filteredMovements.filter((m) => m.type === 'DAMAGED' || m.type === 'SPOILED');
+      const damagedCount = losses.filter((m) => m.type === 'DAMAGED').length;
+      const spoiledCount = losses.filter((m) => m.type === 'SPOILED').length;
+      const expiredOnHand = batches.filter((b) => b.qty > 0 && b.expiry && new Date(b.expiry) < new Date()).length;
+
+      const reasonMap = new Map();
+      losses.forEach((m) => {
+        const key = (m.reason || 'Unspecified').trim();
+        reasonMap.set(key, (reasonMap.get(key) || 0) + 1);
+      });
+      const reasons = Array.from(reasonMap.entries()).sort((a, b) => b[1] - a[1]);
+
+      const rows = [
+        ['Report Category', 'Waste & Loss', 'Timeline', activeRange.label, 'Exported At', exportedAt],
+        [],
+        ['WASTE & LOSS SUMMARY'],
+        ['Metric', 'Value'],
+        ['Total Loss Entries', losses.length],
+        ['Damaged Entries', damagedCount],
+        ['Spoiled Entries', spoiledCount],
+        ['Unwritten Expired Batches', invDash.data?.expiredCount ?? expiredOnHand],
+        [],
+        ['TOP WASTE REASONS (PERIOD)'],
+        ['Reason', 'Entries'],
+        ...reasons.map(([reason, count]) => [reason, count]),
+        [],
+        ['WASTE & LOSS LOGS IN PERIOD'],
+        ['Date', 'Item', 'Batch', 'Type', 'Qty', 'Unit', 'Reason', 'Recorded By'],
+        ...losses.map((m) => [
+          m.createdAt || m.date,
+          m.itemName,
+          m.batchCode || '-',
+          MOVE_LABEL[m.type] || m.type,
+          m.qty,
+          m.unit,
+          m.reason || '',
+          m.recordedBy || m.user || '',
+        ]),
+      ];
+      downloadCsv(`mamitas-waste-report-${range}.csv`, rows);
+      return;
+    }
+
+    // Performance Analytics
+    const dishMap = new Map();
+    filteredOrders
+      .filter((o) => o.status === 'completed')
+      .forEach((o) => {
+        (o.items || []).forEach((line) => {
+          const name = line.itemName || line.name;
+          if (!name) return;
+          dishMap.set(name, (dishMap.get(name) || 0) + Number(line.qty || 0));
+        });
+      });
+
+    const topDishes =
+      dishMap.size > 0
+        ? Array.from(dishMap.entries())
+            .map(([name, qty]) => ({ name, qty }))
+            .sort((a, b) => b.qty - a.qty)
+        : range === 'today'
+          ? (sales.data?.topSellers || [])
+          : [];
+
+    const readiness =
+      invDash.data?.totalItems > 0
+        ? Math.round(((invDash.data.totalItems - invDash.data.lowOrOutCount) / invDash.data.totalItems) * 100)
+        : 100;
+    const periodLosses = filteredMovements.filter((m) => m.type === 'DAMAGED' || m.type === 'SPOILED').length;
+
+    const cashierMap = new Map();
+    filteredSessions.forEach((s) => {
+      const key = s.cashier || 'Unknown';
+      const row = cashierMap.get(key) || { cashier: key, sales: 0, orders: 0, shifts: 0 };
+      row.sales += Number(s.netSales || 0);
+      row.orders += Number(s.orders || 0);
+      row.shifts += 1;
+      cashierMap.set(key, row);
+    });
+    const cashierSummary = Array.from(cashierMap.values()).sort((a, b) => b.sales - a.sales);
+
+    const rows = [
+      ['Report Category', 'Performance Analytics', 'Timeline', activeRange.label, 'Exported At', exportedAt],
+      [],
+      ['PERFORMANCE SUMMARY'],
+      ['Metric', 'Value'],
+      ['Stock Readiness (%)', `${readiness}%`],
+      ['Top Dish Volume', topDishes[0] ? `${topDishes[0].name} (${topDishes[0].qty})` : 'None'],
+      ['Shifts Recorded in Period', filteredSessions.length],
+      ['Loss Incidents in Period', periodLosses],
+      [],
+      ['MENU ITEM SALES RANKING'],
+      ['Rank', 'Menu Item', 'Units Sold'],
+      ...topDishes.map((t, idx) => [idx + 1, t.name, t.qty]),
+      [],
+      ['CASHIER SALES COMPARISON'],
+      ['Cashier', 'Net Sales', 'Orders', 'Shifts'],
+      ...cashierSummary.map((c) => [c.cashier, Number(c.sales).toFixed(2), c.orders, c.shifts]),
+      [],
+      ['SHIFT RECONCILIATION LOGS IN PERIOD'],
+      ['Cashier', 'Orders', 'Net Sales', 'Expected Cash', 'Counted Cash', 'Difference', 'Status'],
+      ...filteredSessions.map((s) => [
+        s.cashier,
+        s.orders,
+        Number(s.netSales || 0).toFixed(2),
+        Number(s.expectedCash || 0).toFixed(2),
+        s.isOpen ? 'Open' : Number(s.countedCash || 0).toFixed(2),
+        s.isOpen ? '-' : Number(s.cashDifference || 0).toFixed(2),
+        s.isOpen ? 'Open' : s.cashDifference === 0 ? 'Balanced' : 'Variance',
+      ]),
+    ];
+    downloadCsv(`mamitas-performance-report-${range}.csv`, rows);
   };
 
   return (
@@ -158,289 +370,41 @@ export default function Reports() {
       </div>
 
       {tab === 'sales' && (
-        <SalesReport
+        <SalesReportTab
+          range={range}
+          rangeLabel={activeRange.label}
           sales={sales.data}
-          sessions={sessions.data?.sessions || []}
+          sessions={filteredSessions}
           orders={filteredOrders}
         />
       )}
       {tab === 'inventory' && (
-        <InventoryUsageReport
+        <InventoryUsageReportTab
+          rangeLabel={activeRange.label}
           items={items}
           movements={filteredMovements}
           invDash={invDash.data}
         />
       )}
       {tab === 'waste' && (
-        <WasteLossReport
+        <WasteLossReportTab
+          rangeLabel={activeRange.label}
           movements={filteredMovements}
           batches={batches}
           invDash={invDash.data}
         />
       )}
       {tab === 'performance' && (
-        <PerformanceReport
+        <PerformanceReportTab
+          range={range}
+          rangeLabel={activeRange.label}
           sales={sales.data}
-          sessions={sessions.data?.sessions || []}
+          orders={filteredOrders}
+          movements={filteredMovements}
+          sessions={filteredSessions}
           invDash={invDash.data}
         />
       )}
     </section>
-  );
-}
-
-function SalesReport({ sales, sessions, orders }) {
-  const s = sales || { todaySales: 0, todayOrders: 0, averageOrder: 0, recentOrders: [] };
-  const list = orders.length ? orders : s.recentOrders;
-  const completed = list.filter((o) => o.status === 'completed');
-  const rangeTotal = completed.reduce((sum, o) => sum + Number(o.total || 0), 0);
-  const displayRevenue = orders.length ? rangeTotal : s.todaySales;
-  const displayCount = orders.length ? completed.length : s.todayOrders;
-  const displayAvg = displayCount > 0 ? displayRevenue / displayCount : s.averageOrder;
-
-  const cashTotal = sessions.reduce((sum, x) => sum + Number(x.cashSales || 0), 0);
-  const paynowTotal = sessions.reduce((sum, x) => sum + Number(x.paynowSales || 0), 0);
-  const cardTotal = sessions.reduce((sum, x) => sum + Number(x.cardSales || 0), 0);
-  const paySum = Math.max(1, cashTotal + paynowTotal + cardTotal);
-
-  return (
-    <>
-      <div className="stat-grid">
-        <StatCard label="Gross sales" value={formatMoney(displayRevenue)} tone="ok" hint="Completed orders" />
-        <StatCard label="Completed orders" value={displayCount} tone="info" hint="Paid transactions" />
-        <StatCard label="Average ticket" value={formatMoney(displayAvg)} tone="info" hint="Per order" />
-        <StatCard label="Active sessions" value={sessions.filter((x) => x.isOpen).length} tone="warn" hint="Open registers today" />
-      </div>
-
-      <div className="charts-grid">
-        <div className="card panel">
-          <h2>Payment Channel Mix (Today)</h2>
-          <p className="chart-sub">Settlement breakdown across cash drawer and digital channels</p>
-          <div className="health-bars" style={{ marginTop: 14 }}>
-            {[
-              { label: 'Cash', val: cashTotal, cls: 'seg-ok' },
-              { label: 'PayNow', val: paynowTotal, cls: 'seg-info' },
-              { label: 'Card', val: cardTotal, cls: 'seg-warn' },
-            ].map((ch) => {
-              const pct = cashTotal + paynowTotal + cardTotal > 0 ? Math.round((ch.val / paySum) * 100) : 0;
-              return (
-                <div className="health-row" key={ch.label}>
-                  <div className="health-meta">
-                    <strong>{ch.label}</strong>
-                    <span>{formatMoney(ch.val)} ({pct}%)</span>
-                  </div>
-                  <div className="stacked-track">
-                    <div className={`seg ${ch.cls}`} style={{ width: `${pct}%` }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="card panel">
-          <h2>Recent Financial Transactions</h2>
-          {list.length === 0 ? (
-            <p className="muted">No orders found in this period.</p>
-          ) : (
-            <ul className="list">
-              {list.slice(0, 6).map((o) => (
-                <li key={o.id}>
-                  <span>
-                    Order #{o.number || o.order_number} · <strong>{formatMoney(o.total)}</strong>
-                    <br />
-                    <small className="muted">{fmtDateTime(o.createdAt || o.created_at)}</small>
-                  </span>
-                  <StatusBadge tone={o.status === 'completed' ? 'ok' : 'info'}>
-                    {o.status === 'completed' ? 'Completed' : 'Preparing'}
-                  </StatusBadge>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </>
-  );
-}
-
-function InventoryUsageReport({ items, movements, invDash }) {
-  const inCount = movements.filter((m) => m.type === 'IN').length;
-  const usedCount = movements.filter((m) => m.type === 'USED').length;
-  const adjCount = movements.filter((m) => m.type === 'ADJUSTMENT').length;
-  const menuValue = items
-    .filter((i) => i.type !== 'ingredient')
-    .reduce((sum, i) => sum + Number(i.qtyUsable || 0) * Number(i.price || 0), 0);
-
-  return (
-    <>
-      <div className="stat-grid">
-        <StatCard label="Stock-in entries" value={inCount} tone="ok" hint="In selected period" />
-        <StatCard label="Usage entries" value={usedCount} tone="info" hint="Kitchen & POS deductions" />
-        <StatCard label="Stock adjustments" value={adjCount} tone="warn" hint="Manual count corrections" />
-        <StatCard label="Ready menu retail value" value={formatMoney(menuValue)} tone="ok" hint="Current usable servings & trays" />
-      </div>
-
-      <div className="table-wrap">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th>Type</th>
-              <th>Category</th>
-              <th className="num">On Hand</th>
-              <th className="num">Usable</th>
-              <th className="num">Min Level</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.length === 0 && (
-              <tr><td colSpan="7" className="empty">No inventory items available.</td></tr>
-            )}
-            {items.slice(0, 25).map((i) => {
-              const stock = i.type === 'ingredient' ? i.qtyOnHand : i.qtyUsable;
-              const st = stockStatus(stock, i.minLevel);
-              return (
-                <tr key={i.id}>
-                  <td>{i.name}</td>
-                  <td>{TYPE_LABEL[i.type]}</td>
-                  <td>{i.category}</td>
-                  <td className="num">{i.qtyOnHand} {i.unit}</td>
-                  <td className="num">{i.qtyUsable} {i.unit}</td>
-                  <td className="num">{i.minLevel} {i.unit}</td>
-                  <td><StatusBadge tone={st.tone}>{st.label}</StatusBadge></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {invDash?.categories?.length > 0 && (
-        <p className="muted" style={{ marginTop: 10 }}>
-          Showing top 25 active items across {invDash.categories.length} categories. Use Export CSV for the full ledger.
-        </p>
-      )}
-    </>
-  );
-}
-
-function WasteLossReport({ movements, batches, invDash }) {
-  const losses = movements.filter((m) => m.type === 'DAMAGED' || m.type === 'SPOILED');
-  const damaged = losses.filter((m) => m.type === 'DAMAGED').length;
-  const spoiled = losses.filter((m) => m.type === 'SPOILED').length;
-  const expiredOnHand = batches.filter((b) => b.qty > 0 && b.expiry && new Date(b.expiry) < new Date()).length;
-
-  return (
-    <>
-      <div className="stat-grid">
-        <StatCard label="Total loss entries" value={losses.length} tone="danger" hint="Damaged + Spoiled" />
-        <StatCard label="Damaged entries" value={damaged} tone="danger" hint="Prep & handling loss" />
-        <StatCard label="Spoiled entries" value={spoiled} tone="warn" hint="Expired / quality write-offs" />
-        <StatCard label="Unwritten expired batches" value={invDash?.expiredCount ?? expiredOnHand} tone="danger" hint="Pending write-off" />
-      </div>
-
-      <div className="table-wrap">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Date &amp; Time</th>
-              <th>Item</th>
-              <th>Batch</th>
-              <th>Loss Type</th>
-              <th className="num">Quantity</th>
-              <th>Reason</th>
-              <th>Recorded By</th>
-            </tr>
-          </thead>
-          <tbody>
-            {losses.length === 0 && (
-              <tr><td colSpan="7" className="empty">No damaged or spoiled entries in this period.</td></tr>
-            )}
-            {losses.slice(0, 25).map((m) => (
-              <tr key={m.id}>
-                <td>{fmtDateTime(m.createdAt)}</td>
-                <td>{m.itemName}</td>
-                <td className="batch-id">{m.batchCode || '-'}</td>
-                <td><StatusBadge tone={MOVE_TONE[m.type]}>{MOVE_LABEL[m.type]}</StatusBadge></td>
-                <td className="num">{m.qty} {m.unit}</td>
-                <td>{m.reason || 'No reason noted'}</td>
-                <td>{m.recordedBy}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </>
-  );
-}
-
-function PerformanceReport({ sales, sessions, invDash }) {
-  const top = sales?.topSellers || [];
-  const maxQty = Math.max(1, ...top.map((t) => Number(t.qty || 0)));
-  const readiness = invDash?.totalItems > 0
-    ? Math.round(((invDash.totalItems - invDash.lowOrOutCount) / invDash.totalItems) * 100)
-    : 100;
-
-  return (
-    <>
-      <div className="stat-grid">
-        <StatCard label="Stock readiness" value={`${readiness}%`} tone="ok" hint="Items above low-stock threshold" />
-        <StatCard label="Top dish volume" value={top[0] ? `${top[0].qty} sold` : '0 sold'} tone="info" hint={top[0]?.name || 'No sales yet'} />
-        <StatCard label="Shifts recorded today" value={sessions.length} tone="info" hint="Cashier drawer sessions" />
-        <StatCard label="7-day loss incidents" value={invDash?.losses7d ?? 0} tone="warn" hint="Spoilage & damage count" />
-      </div>
-
-      <div className="charts-grid">
-        <div className="card panel">
-          <h2>Menu Item Sales Ranking</h2>
-          <p className="chart-sub">Relative demand across top-selling dishes today</p>
-          {top.length === 0 ? (
-            <p className="muted">No dish sales recorded yet today.</p>
-          ) : (
-            <div className="health-bars" style={{ marginTop: 14 }}>
-              {top.map((t) => {
-                const pct = Math.round((Number(t.qty || 0) / maxQty) * 100);
-                return (
-                  <div className="health-row" key={t.name}>
-                    <div className="health-meta">
-                      <strong>{t.name}</strong>
-                      <span>{t.qty} sold</span>
-                    </div>
-                    <div className="stacked-track">
-                      <div className="seg seg-ok" style={{ width: `${Math.max(8, pct)}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="card panel">
-          <h2>Cashier Shift Reconciliation</h2>
-          {sessions.length === 0 ? (
-            <p className="muted">No cashier shifts opened today.</p>
-          ) : (
-            <ul className="list">
-              {sessions.map((s) => (
-                <li key={s.id}>
-                  <span>
-                    <strong>{s.cashier}</strong> · {s.orders} orders ({formatMoney(s.netSales)})
-                    <br />
-                    <small className="muted">
-                      Expected: {formatMoney(s.expectedCash)} · Counted: {s.isOpen ? 'Open' : formatMoney(s.countedCash)}
-                    </small>
-                  </span>
-                  <StatusBadge tone={s.isOpen ? 'info' : s.cashDifference === 0 ? 'ok' : 'danger'}>
-                    {s.isOpen ? 'Open' : s.cashDifference === 0 ? 'Balanced' : formatMoney(s.cashDifference)}
-                  </StatusBadge>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </>
   );
 }

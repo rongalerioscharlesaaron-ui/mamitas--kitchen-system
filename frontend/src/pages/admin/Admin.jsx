@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Users, Settings, UtensilsCrossed, ShieldCheck, Database, Plus, RefreshCw, Download } from 'lucide-react';
 import { api } from '../../api/client';
 import { useInventory } from '../../context/InventoryContext';
+import { useOrders } from '../../context/OrderContext';
 import { SHOP } from '../../config/shop';
 import { ROLE_LABELS } from '../../routes/navItems';
 import StatusBadge from '../../components/StatusBadge';
@@ -583,7 +584,7 @@ function AuditAndBackupsTab({ onNotice }) {
       .catch(() => {});
   };
 
-useEffect(() => {
+  useEffect(() => {
     let active = true;
     const run = async () => {
       setLoadingLogs(true);
