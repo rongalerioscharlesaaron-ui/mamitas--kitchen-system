@@ -68,7 +68,7 @@ async function main() {
   }
 
   const found = await query(
-    'SELECT id, full_name, role FROM users WHERE lower(username) = lower($1)',
+    'SELECT id, full_name, role FROM users WHERE lower(username) = lower($1) AND deleted_at IS NULL',
     [username]
   );
   const existing = found.rows[0];

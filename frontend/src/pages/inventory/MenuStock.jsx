@@ -30,7 +30,7 @@ function MenuTable({ title, nameLabel, qtyLabel, showCategory, rows, available, 
               <th className="num">{qtyLabel}</th>
               <th className="num">Low-stock level</th>
               <th>Status</th>
-              <th className="num">Expired leftovers</th>
+              <th className="num">Leftovers</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -49,18 +49,26 @@ function MenuTable({ title, nameLabel, qtyLabel, showCategory, rows, available, 
                   <td className="num">{formatMoney(i.price)}</td>
                   <td className="num">{qty} {i.unit}</td>
                   <td className="num">{i.minLevel} {i.unit}</td>
-                  <td><StatusBadge tone={st.tone}>{st.label}</StatusBadge></td>
+                  <td>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+                      <StatusBadge tone={st.tone}>{st.label}</StatusBadge>
+                      {i.isEnabled === false && <StatusBadge tone="danger">Disabled</StatusBadge>}
+                    </div>
+                  </td>
                   <td className="num">
                     {left > 0 ? <StatusBadge tone="danger">{left} {i.unit}</StatusBadge> : 'None'}
                   </td>
                   <td>
                     <div className="actions">
-                      <button className="btn btn-secondary btn-sm" onClick={() => onAction('stockin', i)}>
-                        {i.type === 'food' ? 'Add servings' : 'Add trays'}
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        disabled={i.isEnabled === false}
+                        title={i.isEnabled === false ? 'Disabled by the owner. Enable it in Administration > Menu Management.' : undefined}
+                        onClick={() => onAction('stockin', i)}
+                      >
+                        Add trays
                       </button>
-                      <button className="btn btn-secondary btn-sm" onClick={() => onAction('loss', i)}>Damage</button>
                       <button className="btn btn-secondary btn-sm" onClick={() => onAction('adjust', i)}>Adjust</button>
-                      <button className="btn btn-secondary btn-sm" onClick={() => onAction('edit', i)}>Edit</button>
                     </div>
                   </td>
                 </tr>
@@ -112,8 +120,10 @@ export default function MenuStock() {
         <button className="btn btn-primary" onClick={() => setModal({ kind: 'add' })}>+ Add menu item</button>
       </div>
       <p className="muted">
-        Foods and trays are cooked fresh each day. Servings added today are available until the end of the day, then
-        they expire. Each item sold at the cashier takes one serving or one tray from here.
+        Dishes are cooked fresh each day. Foods are added by the tray (1 tray = 10 servings), and adding
+        trays takes the dish's ingredients out of inventory, oldest batch first. Servings added today are available
+        until the end of the day, then they expire. Each item sold at the cashier takes one serving from
+        here.
       </p>
 
       {expiredItems > 0 && (
@@ -143,14 +153,9 @@ export default function MenuStock() {
       </div>
 
       <MenuTable
-        title="Foods" nameLabel="Food" qtyLabel="Servings available today" showCategory
+        title="Foods" nameLabel="Food" qtyLabel="Servings" showCategory
         rows={foods} available={usableStockByItem} expired={expired}
         onAction={onAction} emptyText="No foods found."
-      />
-      <MenuTable
-        title="Food trays" nameLabel="Food tray" qtyLabel="Trays available today" showCategory={false}
-        rows={trays} available={usableStockByItem} expired={expired}
-        onAction={onAction} emptyText="No food trays found."
       />
 
       {modal?.kind === 'add' && <AddMenuItemModal onClose={close} onDone={setNotice} />}

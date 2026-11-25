@@ -14,10 +14,14 @@ export default function StockInModal({
   const options = items.filter(
     (i) =>
       (!types || types.includes(i.type)) &&
+      i.isEnabled !== false && // a disabled menu item cannot get new stock
       !(noExpiryOnly && i.type === 'ingredient' && i.hasExpiry)
   );
   const item = items.find((i) => i.id === Number(form.itemId));
   const isMenu = item && item.type !== 'ingredient';
+  const isFood = item?.type === 'food';
+  const perTray = item?.servingsPerTray ?? 10;
+  const trays = Number(form.qty);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -32,7 +36,7 @@ export default function StockInModal({
   };
 
   return (
-    <Modal title={isMenu ? 'Add servings' : 'Stock in'} onClose={onClose}>
+    <Modal title={isMenu ? 'Add trays' : 'Stock in'} onClose={onClose}>
       <form onSubmit={submit}>
         {noExpiryOnly && (
           <div className="info-box">
@@ -58,12 +62,19 @@ export default function StockInModal({
         </div>
         <div className="field">
           <label htmlFor="si-qty">
-            {isMenu ? `${item.unit === 'trays' ? 'Trays' : 'Servings'} added` : 'Quantity received'} {item && !isMenu ? `(${item.unit})` : ''}
+            {isMenu ? (isFood ? 'Trays cooked' : 'Trays added') : 'Quantity received'} {item && !isMenu ? `(${item.unit})` : ''}
           </label>
           <input
             id="si-qty" type="number" min="0" step={isMenu ? '1' : 'any'}
             value={form.qty} onChange={set('qty')}
           />
+          {isFood && (
+            <span className="hint">
+              1 tray = {perTray} servings
+              {trays > 0 ? ` (${trays} ${trays === 1 ? 'tray' : 'trays'} = ${trays * perTray} servings)` : ''}.
+              The ingredients of this dish are taken from inventory, oldest batch first.
+            </span>
+          )}
           {isMenu && (
             <span className="hint">
               Freshly cooked for the day. No expiry date is needed: these expire at the end of the day.

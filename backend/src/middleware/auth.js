@@ -5,36 +5,55 @@ import { security } from '../config/security.js';
 import { unauthorized, forbidden } from '../utils/httpError.js';
 import { audit } from '../utils/audit.js';
 
-// Returns the user id from a valid session cookie, or null.
+// Returns { userId, sessionVersion } from a valid session cookie, or null.
 export function readSession(req) {
   const token = req.cookies?.[security.cookieName];
   if (!token) return null;
   try {
     const payload = jwt.verify(token, env.jwtSecret, { algorithms: ['HS256'] });
-    return Number(payload.sub) || null;
+    const userId = Number(payload.sub) || null;
+    if (!userId) return null;
+    return { userId, sessionVersion: Number(payload.sv) || 1 };
   } catch {
     return null;
   }
 }
 
-// The user is looked up on every request, so a deactivated account or a changed
-// role takes effect immediately.
+// Looked up on every request: deactivated accounts, role changes, password resets,
+// and "sign out everywhere" take effect immediately.
 export async function requireAuth(req, res, next) {
-  const userId = readSession(req);
-  if (!userId) throw unauthorized();
+  const session = readSession(req);
+  if (!session) throw unauthorized();
 
   const { rows } = await query(
-    'SELECT id, username, full_name, role, is_active FROM users WHERE id = $1',
-    [userId]
+    `SELECT id, username, full_name, role, is_active, must_change_password, session_version
+       FROM users
+      WHERE id = $1`,
+    [session.userId]
   );
   const user = rows[0];
   if (!user || !user.is_active) throw unauthorized();
+  if (Number(user.session_version) !== session.sessionVersion) throw unauthorized();
 
-  req.user = { id: user.id, username: user.username, name: user.full_name, role: user.role };
+  req.user = {
+    id: user.id,
+    username: user.username,
+    name: user.full_name,
+    role: user.role,
+    mustChangePassword: Boolean(user.must_change_password),
+  };
+
+  // While a temporary password is active, only /auth/me, /auth/change-password, and /auth/logout work
+  const path = req.originalUrl.split('?')[0];
+  const allowedWhileTemp = ['/api/auth/me', '/api/auth/change-password', '/api/auth/logout'];
+  if (req.user.mustChangePassword && !allowedWhileTemp.includes(path)) {
+    throw forbidden('You must set a new password before continuing.');
+  }
+
   next();
 }
 
-// Use after requireAuth:  router.get('/', requireAuth, requireRole('owner'), handler)
+// Use after requireAuth: router.get('/', requireAuth, requireRole('owner'), handler)
 export function requireRole(...roles) {
   return async (req, res, next) => {
     if (!req.user) throw unauthorized();

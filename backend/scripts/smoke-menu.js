@@ -42,11 +42,11 @@ async function main() {
     const dish = await api('POST', '/items', {
       cookie: K,
       body: {
-        type: 'food', name: N.dish, category: 'Main dishes', price: 5, minLevel: 2, qty: 10,
+        type: 'food', name: N.dish, category: 'Main dishes', price: 5, minLevel: 2, trays: 1,
         expiry: dayOffset(30),
       },
     });
-    check('A dish is created with 10 servings and no expiry date is needed (201)',
+    check('A dish is created with 1 tray (10 servings) and no expiry date is needed (201)',
       dish.status === 201, `got ${dish.status} ${JSON.stringify(dish.data)}`);
     const dishId = dish.data?.item?.id;
 
@@ -63,12 +63,13 @@ async function main() {
       tray.status === 201 && tb?.expiryDate === today, `${tray.status} ${JSON.stringify(tb)}`);
 
     const more = await api('POST', `/items/${dishId}/batches`, {
-      cookie: K, body: { qty: 5, expiry: dayOffset(10) },
+      cookie: K, body: { trays: 1, expiry: dayOffset(10) },
     });
     const dishBatches = (await api('GET', `/batches?itemId=${dishId}`, { cookie: K })).data?.batches ?? [];
-    check('Adding servings ignores any expiry date: still 2 deliveries, all expiring today, 15 available',
-      more.status === 201 && dishBatches.length === 2 && dishBatches.every((b) => b.expiryDate === today)
-        && (await food(dishId))?.qtyUsable === 15, `${more.status} ${JSON.stringify(dishBatches)}`);
+    check('Adding a tray ignores any expiry date: still 2 deliveries, all expiring today, 20 available',
+      more.status === 201 && more.data?.servings === 10 && dishBatches.length === 2
+        && dishBatches.every((b) => b.expiryDate === today)
+        && (await food(dishId))?.qtyUsable === 20, `${more.status} ${JSON.stringify(dishBatches)}`);
 
     const raw = await query(
       `INSERT INTO inventory_batches (item_id, qty_received, qty_remaining, expiry_date)
@@ -99,8 +100,8 @@ async function main() {
       (await loss(ingId, { type: 'DAMAGED', qty: 1, reason: 'Dropped' })).status === 400);
 
     const lost = await loss(dishId, { type: 'DAMAGED', qty: 3, reason: 'Dropped' });
-    check('3 damaged servings are taken from today\'s stock without choosing a batch (15 becomes 12)',
-      lost.status === 200 && lost.data?.result?.remaining === 12 && (await food(dishId))?.qtyUsable === 12,
+    check('3 damaged servings are taken from today\'s stock without choosing a batch (20 becomes 17)',
+      lost.status === 200 && lost.data?.result?.remaining === 17 && (await food(dishId))?.qtyUsable === 17,
       `${lost.status} ${JSON.stringify(lost.data)}`);
     const dmgLog = await api('GET',
       `/movements?kind=menu&type=DAMAGED&q=${encodeURIComponent(N.dish)}`, { cookie: K });
@@ -108,17 +109,17 @@ async function main() {
       (dmgLog.data?.movements ?? []).some((m) => m.type === 'DAMAGED' && m.qty === 3));
 
     // ---------- Adjusting servings ----------
-    check('Counting the same number is refused (400)', (await adjust(dishId, 12)).status === 400);
+    check('Counting the same number is refused (400)', (await adjust(dishId, 17)).status === 400);
     check('Counting half a serving is refused (400)', (await adjust(dishId, 4.5)).status === 400);
     check('An empty reason is refused (400)', (await adjust(dishId, 5, '')).status === 400);
 
-    const up = await adjust(dishId, 20);
-    check('Counting 20 when the system shows 12 gives +8',
-      up.status === 200 && up.data?.result?.diff === 8 && (await food(dishId))?.qtyUsable === 20,
+    const up = await adjust(dishId, 25);
+    check('Counting 25 when the system shows 17 gives +8',
+      up.status === 200 && up.data?.result?.diff === 8 && (await food(dishId))?.qtyUsable === 25,
       `${up.status} ${JSON.stringify(up.data)}`);
-    const down = await adjust(dishId, 4);
-    check('Counting 4 gives -16, taken oldest first',
-      down.status === 200 && down.data?.result?.diff === -16 && (await food(dishId))?.qtyUsable === 4,
+    const down = await adjust(dishId, 9);
+    check('Counting 9 gives -16, taken oldest first',
+      down.status === 200 && down.data?.result?.diff === -16 && (await food(dishId))?.qtyUsable === 9,
       `${down.status} ${JSON.stringify(down.data)}`);
     const adjLog = (await api('GET',
       `/movements?kind=menu&type=ADJUSTMENT&q=${encodeURIComponent(N.dish)}`, { cookie: K })).data?.movements ?? [];

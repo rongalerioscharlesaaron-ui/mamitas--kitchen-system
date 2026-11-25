@@ -60,16 +60,26 @@ router.patch('/:id', ...staff, async (req, res) => {
   res.json({ item: await getItem(itemId) });
 });
 
+// Ingredients: { qty, expiry }. Foods: { trays }. Cooking trays of a dish takes the ingredients of its
+// recipe out of inventory (oldest batch first); the reply lists what was used.
 router.post('/:id/batches', ...staff, async (req, res) => {
-  const { batch, item } = await addBatch(req.user, req.params.id, req.body);
+  const { batch, item, food } = await addBatch(req.user, req.params.id, req.body);
   await audit({
     ...who(req),
     action: 'batch.created',
     entity: 'batch',
     entityId: batch.id,
-    details: { code: batch.code, item: item.name, qty: batch.qty, expiry: batch.expiry },
+    details: {
+      code: batch.code, item: item.name, qty: batch.qty, expiry: batch.expiry,
+      ...(food ? { trays: food.trays, ingredientsUsed: food.used } : {}),
+    },
   });
-  res.status(201).json({ batch });
+  res.status(201).json({
+    batch,
+    ...(food
+      ? { trays: food.trays, servings: food.servings, hasRecipe: food.hasRecipe, used: food.used }
+      : {}),
+  });
 });
 
 // Foods and trays: damaged or spoiled servings, taken from today's stock

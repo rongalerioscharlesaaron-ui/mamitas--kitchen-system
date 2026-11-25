@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { api, ApiError } from '../api/client';
 import { useAuth } from './AuthContext';
 import { useInventory } from './InventoryContext';
+import { useSession } from './SessionContext';
 import { SHOP } from '../config/shop';
 import { FOOD_CATEGORIES } from '../utils/inventory';
 import { toCents, fromCents } from '../utils/money';
@@ -17,9 +18,10 @@ export function OrderProvider({ children }) {
   const { user } = useAuth();
   const inventory = useInventory();
   const refreshInventory = inventory.refresh;
+  const { refresh: refreshSession } = useSession();
   const userId = user?.id ?? null;
-  const active = Boolean(user && SALES_ROLES.includes(user.role));
-  const inventoryActive = Boolean(user && STAFF_ROLES.includes(user.role));
+  const active = Boolean(user && !user.mustChangePassword && SALES_ROLES.includes(user.role));
+  const inventoryActive = Boolean(user && !user.mustChangePassword && STAFF_ROLES.includes(user.role));
 
   const [menuItems, setMenuItems] = useState([]);
   const [shop, setShop] = useState(SHOP);
@@ -32,6 +34,15 @@ export function OrderProvider({ children }) {
   const loadMenu = useCallback(async () => {
     const data = await api.get('/menu');
     setMenuItems(data.items);
+    // An item the owner disabled disappears from the menu. Take it out of the open order too,
+    // so it is not sent to the server and the order is not refused.
+    const onMenu = new Set(data.items.map((m) => m.id));
+    setCart((c) => {
+      const kept = c.filter((l) => onMenu.has(l.itemId));
+      if (kept.length === c.length) return c;
+      requestRef.current = null; // the order changed, so it is a new order
+      return kept;
+    });
   }, []);
 
   // Load the menu and shop settings when a cashier or owner logs in; clear everything on logout
@@ -181,10 +192,12 @@ export function OrderProvider({ children }) {
       await Promise.all([
         loadMenu().catch(() => {}),
         inventoryActive ? refreshInventory() : null,
+        refreshSession(),
       ]);
       return { ok: true, order: data.order, duplicate: data.duplicate };
     } catch (err) {
       loadMenu().catch(() => {}); // show the latest stock after a refused order
+      if (err instanceof ApiError && err.status === 409) refreshSession(); // the session may have been closed elsewhere
       if (err instanceof ApiError) return fail(err.message, err.status);
       return fail('Something went wrong. Please try again.', -1);
     }

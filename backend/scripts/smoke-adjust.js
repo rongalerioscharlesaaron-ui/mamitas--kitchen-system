@@ -45,9 +45,9 @@ async function main() {
 
     const dish = await api('POST', '/items', {
       cookie: K,
-      body: { type: 'food', name: N.dish, category: 'Main dishes', price: 5, minLevel: 2, qty: 10 },
+      body: { type: 'food', name: N.dish, category: 'Main dishes', price: 5, minLevel: 2, trays: 1 },
     });
-    check('Test dish created with 10 servings (201)', dish.status === 201, `got ${dish.status}`);
+    check('Test dish created with 1 tray = 10 servings (201)', dish.status === 201, `got ${dish.status}`);
     const dishId = dish.data.item.id;
     const dishBatch = dish.data.batch;
 

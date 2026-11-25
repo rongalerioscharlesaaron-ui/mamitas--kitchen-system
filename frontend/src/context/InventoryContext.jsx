@@ -13,9 +13,18 @@ const fail = (message) => ({ ok: false, message });
 const toBatch = (b) => ({ ...b, qty: b.qtyRemaining, received: b.receivedDate, expiry: b.expiryDate });
 const toMovement = (m) => ({ ...m, date: m.createdAt, user: m.recordedBy });
 
+// What to tell the person after trays of a dish were added: the servings, and what came off inventory
+function foodAddedMessage(item, r) {
+  const trays = `${r.trays} ${r.trays === 1 ? 'tray' : 'trays'}`;
+  const head = `Added ${trays} (${r.servings} servings) of ${item.name} for today.`;
+  if (!r.hasRecipe) return `${head} This dish has no recipe yet, so no ingredients were deducted.`;
+  const used = r.used.map((u) => `${u.name} ${u.qty} ${u.unit}`).join(', ');
+  return `${head} Ingredients deducted (oldest batch first): ${used}.`;
+}
+
 export function InventoryProvider({ children }) {
   const { user } = useAuth();
-  const active = Boolean(user && STAFF.includes(user.role));
+  const active = Boolean(user && !user.mustChangePassword && STAFF.includes(user.role));
   const userId = user?.id ?? null;
 
   const [items, setItems] = useState([]);
@@ -134,16 +143,18 @@ export function InventoryProvider({ children }) {
     });
   };
 
-  // Add a menu item: a food (servings) or a food tray. No expiry date: it is cooked fresh for the day.
+  // Add a menu item: a food (cooked by the tray) or a food tray. No expiry date: it is cooked fresh for the day.
   const addItem = ({ name, type, category, price, minLevel, qty }) =>
     run(async () => {
+      const start = qty === '' ? undefined : qty;
       await api.post('/items', {
         type,
         name: name.trim(),
         category,
         price,
         minLevel,
-        qty: qty === '' ? undefined : qty,
+        // A food starts with trays (1 tray = 10 servings). A food tray starts with a quantity.
+        ...(type === 'food' ? { trays: start } : { qty: start }),
       });
       return `${name.trim()} was added.`;
     });
@@ -160,12 +171,31 @@ export function InventoryProvider({ children }) {
     });
   };
 
-  // Ingredients without an expiry date, and servings or trays for the day
+  // Owner only: switch a menu item on or off. A disabled item leaves the POS and cannot get new stock,
+  // but its servings, history and recipe stay.
+  const setMenuEnabled = (itemId, enabled) => {
+    const item = itemMap[itemId];
+    return run(async () => {
+      const { item: r } = await api.patch(`/admin/menu/${itemId}`, { enabled });
+      const name = item?.name ?? r.name ?? 'Item';
+      if (!r.changed) return `${name} was already ${enabled ? 'enabled' : 'disabled'}.`;
+      if (enabled) return `${name} is enabled again. It is back on the POS and in stock-in.`;
+      const left = Number(r.qtyUsable) > 0 ? ` ${r.qtyUsable} ${r.unit} still in stock is kept but cannot be sold.` : '';
+      return `${name} is disabled. It is hidden from the POS and cannot get new stock.${left}`;
+    });
+  };
+
+  // Ingredients without an expiry date, trays of a dish, and food trays for the day
   const addStock = ({ itemId, qty }) => {
     const item = itemMap[itemId];
     if (!item) return Promise.resolve(fail('Choose an item.'));
     const isMenu = item.type !== 'ingredient';
     return run(async () => {
+      // A dish is added by the tray: its recipe's ingredients come off inventory, oldest batch first
+      if (item.type === 'food') {
+        const f = await api.post(`/items/${itemId}/batches`, { trays: qty });
+        return foodAddedMessage(item, f);
+      }
       const r = await api.post(`/items/${itemId}/batches`, { qty });
       return isMenu
         ? `Added ${qty} ${item.unit} of ${item.name} for today.`
@@ -226,13 +256,23 @@ export function InventoryProvider({ children }) {
     });
   };
 
+  // Updates a batch's expiry date
+  const updateBatchExpiry = ({ batchId, expiry }) => {
+    if (!batchId) return Promise.resolve(fail('Choose a batch.'));
+    if (!expiry) return Promise.resolve(fail('Enter an expiry date.'));
+    return run(async () => {
+      const { result } = await api.patch(`/batches/${batchId}`, { expiry });
+      return `Updated expiry date of ${result.itemName} (batch ${result.batchCode}) to ${result.to}.`;
+    });
+  };
+
   return (
     <InventoryContext.Provider
       value={{
         items, batches, movements, stockByItem, usableStockByItem, itemMap, batchMap,
         ready, error, refresh,
-        addIngredient, addItem, updateMenuItem, addStock, recordLoss, recordMenuLoss,
-        writeOffBatch, writeOffExpiredMenu, adjustBatch, adjustMenuStock,
+        addIngredient, addItem, updateMenuItem, setMenuEnabled, addStock, recordLoss, recordMenuLoss,
+        writeOffBatch, writeOffExpiredMenu, adjustBatch, adjustMenuStock, updateBatchExpiry,
       }}
     >
       {children}

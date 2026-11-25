@@ -3,7 +3,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { oneOf, parseId } from '../utils/validate.js';
 import { audit } from '../utils/audit.js';
 import {
-  listBatches, recordLoss, writeOffBatch, adjustBatch, EXPIRY_STATUSES,
+  listBatches, recordLoss, writeOffBatch, adjustBatch, updateBatchExpiry, EXPIRY_STATUSES,
 } from '../services/batchService.js';
 
 const router = Router();
@@ -64,6 +64,20 @@ router.post('/:id/adjust', ...staff, async (req, res) => {
       code: result.batchCode, item: result.itemName,
       from: result.from, to: result.to, diff: result.diff, reason: result.reason,
     },
+  });
+  res.json({ result });
+});
+
+router.patch('/:id', ...staff, async (req, res) => {
+  const result = await updateBatchExpiry(req.user, req.params.id, req.body);
+  await audit({
+    userId: req.user.id,
+    username: req.user.username,
+    action: 'stock.batch_expiry_updated',
+    entity: 'batch',
+    entityId: result.batchId,
+    details: { batchCode: result.batchCode, itemName: result.itemName, to: result.to },
+    ip: req.ip,
   });
   res.json({ result });
 });

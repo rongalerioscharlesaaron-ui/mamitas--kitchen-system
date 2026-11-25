@@ -127,16 +127,31 @@ export async function placeOrder(user, body) {
 
   try {
     const order = await withTransaction(async (db) => {
+      // The cashier needs an open cash session. The row is locked so the session cannot be
+      // closed while this order is being saved.
+      const open = await db.query(
+        `SELECT id FROM cashier_sessions WHERE cashier_id = $1 AND closed_at IS NULL FOR SHARE`,
+        [user.id]
+      );
+      if (!open.rows[0]) throw conflict('Open your cash drawer before taking orders.');
+      const sessionId = open.rows[0].id;
+
       // Ordered by id, so two orders locking the same items always lock them in the same order
       const ids = [...wanted.keys()].sort((x, y) => x - y);
       const found = await db.query(
-        `SELECT id, name, price
+        `SELECT id, name, price, is_enabled
            FROM items
           WHERE id = ANY($1::int[]) AND is_active AND item_type <> 'ingredient'
           ORDER BY id`,
         [ids]
       );
       if (found.rows.length !== ids.length) throw badRequest('One of the items is not on the menu.');
+      const disabled = found.rows.filter((r) => !r.is_enabled).map((r) => r.name);
+      if (disabled.length > 0) {
+        throw badRequest(
+          `${disabled.join(', ')} ${disabled.length === 1 ? 'is' : 'are'} no longer on the menu. Remove ${disabled.length === 1 ? 'it' : 'them'} from the order.`
+        );
+      }
 
       const lines = found.rows.map((r) => ({
         itemId: r.id,
@@ -154,10 +169,10 @@ export async function placeOrder(user, body) {
       const changeCents = tenderedCents - totalCents;
 
       const inserted = await db.query(
-        `INSERT INTO orders (order_type, total, gst_amount, cashier_id, client_request_id)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO orders (order_type, total, gst_amount, cashier_id, client_request_id, session_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id, order_number`,
-        [type, fromCents(totalCents), fromCents(gstIncluded(totalCents)), user.id, requestId]
+        [type, fromCents(totalCents), fromCents(gstIncluded(totalCents)), user.id, requestId, sessionId]
       );
       const { id: orderId, order_number: number } = inserted.rows[0];
 

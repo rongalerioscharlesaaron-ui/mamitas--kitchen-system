@@ -1,16 +1,21 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Modal from '../Modal';
+import SearchableItemInput from './SearchableItemInput';
 import { useInventory } from '../../context/InventoryContext';
 import { expiryStatus, fmtDate } from '../../utils/dates';
 
-const GROUPS = [
-  ['ingredient', 'Ingredients'],
-  ['food', 'Foods'],
-  ['food_tray', 'Food trays'],
-];
+const ORDER = { ingredient: 0, food: 1, food_tray: 2 };
 
 export default function AdjustStockModal({ defaultItemId = '', types = null, onClose, onDone }) {
   const { items, batches, usableStockByItem, adjustBatch, adjustMenuStock } = useInventory();
+
+  const selectableItems = useMemo(
+    () =>
+      items
+        .filter((i) => !types || types.includes(i.type))
+        .sort((a, b) => (ORDER[a.type] ?? 9) - (ORDER[b.type] ?? 9) || a.name.localeCompare(b.name)),
+    [items, types]
+  );
 
   const batchesOf = (itemId) =>
     batches
@@ -43,8 +48,7 @@ export default function AdjustStockModal({ defaultItemId = '', types = null, onC
       : null;
   const ready = isMenu || Boolean(batch);
 
-  const onItem = (e) => {
-    const itemId = e.target.value;
+  const onItemChange = (itemId) => {
     const chosen = items.find((i) => i.id === Number(itemId));
     const options = chosen && chosen.type === 'ingredient' ? batchesOf(itemId) : [];
     setForm({ ...form, itemId, batchId: options.length === 1 ? String(options[0].id) : '', counted: '' });
@@ -73,30 +77,22 @@ export default function AdjustStockModal({ defaultItemId = '', types = null, onC
   };
 
   return (
-    <Modal title="Adjust stock" onClose={onClose}>
+    <Modal title="Adjust Stock" onClose={onClose}>
       <form onSubmit={submit}>
         <div className="info-box">
           Use this after a real count. The stock is set to the quantity you counted, and the difference is saved in the
           movement log as an Adjustment.
         </div>
 
-        <div className="field">
-          <label htmlFor="as-item">1. Item</label>
-          <select id="as-item" value={form.itemId} onChange={onItem}>
-            <option value="">Select item</option>
-            {GROUPS.filter(([t]) => !types || types.includes(t)).map(([t, label]) => {
-              const group = items.filter((i) => i.type === t);
-              if (group.length === 0) return null;
-              return (
-                <optgroup key={t} label={label}>
-                  {group.map((i) => (
-                    <option key={i.id} value={i.id}>{i.name}</option>
-                  ))}
-                </optgroup>
-              );
-            })}
-          </select>
-        </div>
+        <SearchableItemInput
+          id="as-item"
+          label="1. Item"
+          items={selectableItems}
+          value={form.itemId}
+          onChange={onItemChange}
+          placeholder="Type item name..."
+          autoFocus={!defaultItemId}
+        />
 
         {isMenu ? (
           <p className="hint" style={{ margin: '0 0 14px' }}>
@@ -119,7 +115,7 @@ export default function AdjustStockModal({ defaultItemId = '', types = null, onC
 
         <div className="field">
           <label htmlFor="as-counted">
-            {isMenu ? '2.' : '3.'} Quantity you counted {item ? `(${item.unit})` : ''}
+            {isMenu ? '2.' : '3.'} Quantity {item ? `(${item.unit})` : ''}
           </label>
           <input
             id="as-counted" type="number" min="0" step={isMenu ? '1' : 'any'}

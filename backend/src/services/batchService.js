@@ -2,6 +2,7 @@ import { query, withTransaction } from '../config/db.js';
 import { badRequest, notFound } from '../utils/httpError.js';
 import { number, date, oneOf, text, parseId } from '../utils/validate.js';
 import { todaySG } from '../utils/dates.js';
+import { addFoodTrays, MAX_TRAYS } from './menuStockService.js';
 
 export const EXPIRY_STATUSES = ['expired', 'soon', 'ok', 'none'];
 
@@ -75,6 +76,23 @@ export async function addBatch(user, rawItemId, body) {
   );
   const item = found.rows[0];
   if (!item) throw notFound('Item not found.');
+
+  // Foods are added by the tray (1 tray = 10 servings). The ingredients of the dish's recipe are
+  // taken from inventory, oldest batch first, in the same all-or-nothing transaction.
+  if (item.item_type === 'food') {
+    if (b.trays === undefined && b.qty !== undefined) {
+      throw badRequest('Foods are added by the tray. Enter the number of trays.');
+    }
+    const trays = number(b.trays, 'Trays', { min: 1, max: MAX_TRAYS, integer: true });
+    const food = await withTransaction((db) =>
+      addFoodTrays(db, { itemId, trays, userId: user.id })
+    );
+    return {
+      batch: { id: food.batchId, code: food.batchCode, qty: food.servings, expiry: null },
+      item,
+      food,
+    };
+  }
 
   const isIngredient = item.item_type === 'ingredient';
   const qty = number(b.qty, 'Quantity', { min: 0.001, max: 1000000, integer: !isIngredient });
@@ -231,6 +249,39 @@ export async function adjustBatch(user, rawBatchId, body) {
       to: counted,
       diff,
       reason,
+    };
+  });
+}
+
+// Kitchen and owner can correct a batch's expiry date (only for perishable ingredients)
+export async function updateBatchExpiry(user, rawBatchId, body) {
+  const b = body ?? {};
+  const batchId = parseId(rawBatchId, 'batch id');
+  const expiry = date(b.expiry, 'Expiry date');
+
+  return withTransaction(async (db) => {
+    const { rows } = await db.query(
+      `SELECT b.id, b.item_id, b.batch_code, b.expiry_date, i.name, i.item_type, i.has_expiry
+         FROM inventory_batches b
+         JOIN items i ON i.id = b.item_id
+        WHERE b.id = $1
+          FOR UPDATE OF b`,
+      [batchId]
+    );
+    const batch = rows[0];
+    if (!batch) throw notFound('Batch not found.');
+    if (batch.item_type !== 'ingredient' || !batch.has_expiry) {
+      throw badRequest(`${batch.name} does not track an expiry date.`);
+    }
+
+    await db.query('UPDATE inventory_batches SET expiry_date = $2 WHERE id = $1', [batchId, expiry]);
+
+    return {
+      batchId,
+      batchCode: batch.batch_code,
+      itemName: batch.name,
+      from: batch.expiry_date,
+      to: expiry,
     };
   });
 }

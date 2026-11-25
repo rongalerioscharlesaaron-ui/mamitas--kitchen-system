@@ -3,6 +3,7 @@ import { badRequest, notFound, conflict, forbidden } from '../utils/httpError.js
 import { number, date, oneOf, text, bool, parseId } from '../utils/validate.js';
 import { todaySG } from '../utils/dates.js';
 import { insertBatch } from './batchService.js';
+import { addFoodTrays, MAX_TRAYS } from './menuStockService.js';
 
 const statusOf = (qty, min) => (qty <= 0 ? 'out' : qty <= min ? 'low' : 'in');
 
@@ -22,6 +23,8 @@ function mapItem(r) {
     qtyUsable: r.qty_usable,
     openBatches: r.open_batches,
     nextExpiry: r.next_expiry,
+    servingsPerTray: r.servings_per_tray, // foods are cooked by the tray: 1 tray = 10 servings
+    isEnabled: r.is_enabled, // the owner can disable a menu item: hidden from the POS, cannot be sold or cooked
     status: statusOf(stock, r.min_level),
   };
 }
@@ -40,10 +43,10 @@ export async function listItems(type = null) {
   return rows.map(mapItem);
 }
 
-// What the cashier sells: foods and food trays
+// What the cashier sells: foods and food trays that are enabled (a disabled item is hidden from the POS)
 export async function listMenu() {
   const { rows } = await query(
-    `SELECT * FROM v_item_stock WHERE item_type <> 'ingredient' ORDER BY category, name`
+    `SELECT * FROM v_item_stock WHERE item_type <> 'ingredient' AND is_enabled ORDER BY category, name`
   );
   return rows.map(mapItem);
 }
@@ -63,6 +66,7 @@ export async function createItem(user, body) {
   const b = body ?? {};
   const type = oneOf(b.type, 'Type', ['ingredient', 'food', 'food_tray']);
   const isIngredient = type === 'ingredient';
+  const isFood = type === 'food';
 
   const name = text(b.name, 'Name', { max: 100 });
   const unit =
@@ -78,13 +82,26 @@ export async function createItem(user, body) {
     : number(b.price, 'Price', { min: 0.01, max: 100000, decimals: 2 });
   const categoryName =
     type === 'food_tray' ? 'Food trays' : text(b.category, 'Category', { max: 50 });
-  const qty =
-    number(b.qty, 'Starting quantity', {
-      min: 0,
-      max: 1000000,
-      integer: !isIngredient,
-      allowEmpty: true,
-    }) ?? 0;
+  // Foods start with trays (1 tray = 10 servings). Ingredients and food trays start with a quantity.
+  if (isFood && b.qty !== undefined && b.qty !== null && b.qty !== '') {
+    throw badRequest('Foods are added by the tray. Send the number of trays, not a quantity.');
+  }
+  const qty = isFood
+    ? 0
+    : number(b.qty, 'Starting quantity', {
+        min: 0,
+        max: 1000000,
+        integer: !isIngredient,
+        allowEmpty: true,
+      }) ?? 0;
+  const trays = isFood
+    ? number(b.trays, 'Trays cooked today', {
+        min: 0,
+        max: MAX_TRAYS,
+        integer: true,
+        allowEmpty: true,
+      }) ?? 0
+    : 0;
   // Foods and trays are cooked fresh for the day, so no expiry date is entered for them
   const expiry = isIngredient ? date(b.expiry, 'Expiry date', { allowEmpty: true }) : null;
 
@@ -116,7 +133,13 @@ export async function createItem(user, body) {
     const itemId = inserted.rows[0].id;
 
     let batch = null;
-    if (qty > 0) {
+    if (isFood && trays > 0) {
+      // A new dish has no recipe yet, so only its servings are added (nothing is taken from inventory)
+      const food = await addFoodTrays(db, {
+        itemId, trays, userId: user.id, reason: 'Initial stock',
+      });
+      batch = { id: food.batchId, code: food.batchCode };
+    } else if (qty > 0) {
       batch = await insertBatch(db, {
         itemId,
         qty,

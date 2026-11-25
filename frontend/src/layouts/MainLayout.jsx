@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { ChefHat, LogOut, PanelLeft } from 'lucide-react';
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { LogOut, PanelLeft } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useInventory } from '../context/InventoryContext';
 import { useOrders } from '../context/OrderContext';
 import { NAV_GROUPS, ROLE_LABELS } from '../routes/navItems';
 import NotificationBell from '../components/NotificationBell';
+import mamitasLogo from '../assets/mamitas-logo.png';
 
 export default function MainLayout() {
   const { user, logout } = useAuth();
@@ -50,7 +51,7 @@ export default function MainLayout() {
 
       <aside className={`sidebar${mobileOpen ? ' is-open' : ''}`} aria-label="Main navigation">
         <div className="sidebar-brand">
-          <span className="brand-mark"><ChefHat size={20} aria-hidden="true" /></span>
+          <img src={mamitasLogo} alt="" className="sidebar-logo" aria-hidden="true" />
           <span className="brand-text">
             <strong>Mamitas’ Kitchen</strong>
             <small>Singapore</small>
@@ -90,13 +91,13 @@ export default function MainLayout() {
           <div className="topbar-title">Mamitas’ Kitchen Management System</div>
           <div className="topbar-actions">
             <NotificationBell />
-            <div className="profile">
+            <Link to="/account" className="profile" title="My account" style={{ textDecoration: 'none', color: 'inherit' }}>
               <span className="avatar" aria-hidden="true">{initials}</span>
               <span className="profile-text">
                 <strong>{user.name}</strong>
                 <small>{ROLE_LABELS[user.role]}</small>
               </span>
-            </div>
+            </Link>
             <button className="btn btn-secondary btn-sm" onClick={handleLogout}>
               <LogOut size={16} aria-hidden="true" /> Log out
             </button>
