@@ -3,7 +3,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { parseId } from '../utils/validate.js';
 import { audit } from '../utils/audit.js';
 import {
-  listUsers, createUser, updateUser, unlockUser, signOutEverywhere,
+  listUsers, createUser, updateUser, deleteUser, unlockUser, signOutEverywhere, setMenuItemEnabled,
   updateShopSettings, listBackups, createBackup, getBackupPath,
 } from '../services/adminService.js';
 
@@ -41,6 +41,19 @@ router.patch('/users/:id', ...ownerOnly, async (req, res) => {
   res.json({ user });
 });
 
+// Soft delete: the user disappears and cannot sign in, but their history is kept
+router.delete('/users/:id', ...ownerOnly, async (req, res) => {
+  const user = await deleteUser(req.params.id, req.user.id);
+  await audit({
+    ...who(req),
+    action: 'admin.user_deleted',
+    entity: 'user',
+    entityId: user.id,
+    details: { username: user.username, fullName: user.fullName, role: user.role },
+  });
+  res.json({ user });
+});
+
 router.post('/users/:id/unlock', ...ownerOnly, async (req, res) => {
   const id = parseId(req.params.id, 'user id');
   const user = await unlockUser(id);
@@ -65,6 +78,22 @@ router.post('/users/:id/sign-out', ...ownerOnly, async (req, res) => {
     details: { username: user.username },
   });
   res.json({ user });
+});
+
+// Menu Management: body { enabled: true | false }. A disabled item is hidden from the POS and cannot be
+// sold or cooked; its stock and history stay.
+router.patch('/menu/:id', ...ownerOnly, async (req, res) => {
+  const item = await setMenuItemEnabled(req.params.id, req.body);
+  if (item.changed) {
+    await audit({
+      ...who(req),
+      action: item.isEnabled ? 'admin.menu_enabled' : 'admin.menu_disabled',
+      entity: 'item',
+      entityId: item.id,
+      details: { name: item.name, type: item.type, qtyUsable: item.qtyUsable },
+    });
+  }
+  res.json({ item });
 });
 
 // System Configuration

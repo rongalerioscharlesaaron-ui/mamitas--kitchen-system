@@ -33,6 +33,7 @@ export default function NotificationBell() {
   const list = [];
   if (user.role === 'kitchen' || user.role === 'owner') {
     items.forEach((i) => {
+      if (i.isEnabled === false) return; // a disabled item is off the menu, so no low-stock alert
       const stock = (i.type === 'ingredient' ? stockByItem[i.id] : usableStockByItem[i.id]) || 0;
       const s = stockStatus(stock, i.minLevel);
       if (s.key !== 'in') {

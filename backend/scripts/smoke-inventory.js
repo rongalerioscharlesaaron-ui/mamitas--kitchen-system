@@ -88,19 +88,26 @@ async function main() {
 
     const dish = await api('POST', '/items', {
       cookie: K,
-      body: { type: 'food', name: names.dish, category: 'Sides', price: 4.5, minLevel: 5, qty: 10 },
+      body: { type: 'food', name: names.dish, category: 'Sides', price: 4.5, minLevel: 5, trays: 1 },
     });
-    check('A food is created with 10 servings (201)',
+    check('A food is created with 1 tray = 10 servings (201)',
       dish.status === 201 && dish.data?.item?.qtyUsable === 10, `got ${dish.status}`);
     const dishId = dish.data?.item?.id;
     const dishBatch = dish.data?.batch;
 
     const fractional = await api('POST', '/items', {
       cookie: K,
-      body: { type: 'food', name: `${names.dish} frac`, category: 'Sides', price: 4, minLevel: 1, qty: 2.5 },
+      body: { type: 'food', name: `${names.dish} frac`, category: 'Sides', price: 4, minLevel: 1, trays: 2.5 },
     });
-    check('2.5 servings is refused: whole numbers only (400)', fractional.status === 400,
+    check('2.5 trays is refused: whole trays only (400)', fractional.status === 400,
       `got ${fractional.status}`);
+
+    const foodQty = await api('POST', '/items', {
+      cookie: K,
+      body: { type: 'food', name: `${names.dish} qty`, category: 'Sides', price: 4, minLevel: 1, qty: 10 },
+    });
+    check('A food cannot be created with a quantity: it is added by the tray (400)',
+      foodQty.status === 400, `got ${foodQty.status}`);
 
     const salt = await api('POST', '/items', {
       cookie: K,

@@ -63,8 +63,13 @@ export default function AddMenuItemModal({ onClose, onDone }) {
           <span className="hint">An alert shows when available {unit} are at or below this number.</span>
         </div>
         <div className="field">
-          <label htmlFor="mi-qty">{unit === 'trays' ? 'Trays' : 'Servings'} cooked today (optional)</label>
+          <label htmlFor="mi-qty">Trays cooked today (optional)</label>
           <input id="mi-qty" type="number" min="0" step="1" value={form.qty} onChange={set('qty')} />
+          {form.type === 'food' && (
+            <span className="hint">
+              1 tray = 10 servings. A new dish has no recipe yet, so no ingredients are deducted for these trays.
+            </span>
+          )}
         </div>
         {error && <p className="error" role="alert">{error}</p>}
         <div className="form-actions">

@@ -36,6 +36,21 @@ const move = (db, itemId, batchId, type, qty, reason, userId) =>
     [itemId, batchId, type, qty, reason, userId]
   );
 
+// The most trays that can be added in one go (1 tray = 10 servings)
+export const MAX_TRAYS = 100;
+
+// Foods are cooked and added by the tray. The database function takes the ingredients of the
+// dish's recipe out of inventory (oldest batch first), adds today's servings, and logs both.
+// If an ingredient is short it raises an error that lists every shortage and changes nothing.
+// A dish without a recipe still gets its servings (hasRecipe is false). Run it inside a transaction.
+// Resolves to { batchId, batchCode, trays, servings, servingsPerTray, hasRecipe, used: [{ name, unit, qty }] }
+export async function addFoodTrays(db, { itemId, trays, userId, reason = null }) {
+  const { rows } = await db.query('SELECT fn_add_menu_trays($1, $2, $3, $4) AS result', [
+    itemId, trays, userId, reason,
+  ]);
+  return rows[0].result;
+}
+
 // Damaged or spoiled servings come off today's stock, oldest first
 export async function recordMenuLoss(user, rawItemId, body) {
   const b = body ?? {};

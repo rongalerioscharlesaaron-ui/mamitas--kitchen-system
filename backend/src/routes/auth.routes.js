@@ -50,7 +50,7 @@ router.post('/login', loginLimiter, async (req, res) => {
             (locked_until IS NOT NULL AND locked_until > now()) AS is_locked,
             CEIL(GREATEST(EXTRACT(EPOCH FROM (locked_until - now())), 0) / 60)::int AS minutes_left
        FROM users
-      WHERE lower(username) = lower($1)`,
+      WHERE lower(username) = lower($1) AND deleted_at IS NULL`,
     [name]
   );
   const user = rows[0];

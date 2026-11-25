@@ -61,7 +61,8 @@ export async function inventoryDashboard() {
     pool.query(
       `SELECT item_id, name, item_type, category, unit, min_level,
               CASE WHEN item_type = 'ingredient' THEN qty_on_hand ELSE qty_usable END AS stock
-         FROM v_item_stock`
+         FROM v_item_stock
+        WHERE is_enabled`
     ),
     pool.query(
       `SELECT expiry_status, COUNT(*)::int AS n

@@ -9,7 +9,7 @@ import { env } from '../config/env.js';
 import { security } from '../config/security.js';
 import { shop as defaultShop } from '../config/shop.js';
 import { badRequest, conflict, notFound } from '../utils/httpError.js';
-import { text, number, oneOf, bool } from '../utils/validate.js';
+import { text, number, oneOf, bool, parseId } from '../utils/validate.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -37,6 +37,7 @@ export async function listUsers() {
     `SELECT id, username, full_name, role, is_active, must_change_password,
             locked_until, last_login_at, created_at
        FROM users
+      WHERE deleted_at IS NULL
       ORDER BY id ASC`
   );
   return rows.map(mapUser);
@@ -73,7 +74,7 @@ export async function createUser(body) {
 export async function updateUser(id, actorId, body) {
   return withTransaction(async (db) => {
     const { rows: existing } = await db.query(
-      'SELECT id, username, full_name, role, is_active FROM users WHERE id = $1 FOR UPDATE',
+      'SELECT id, username, full_name, role, is_active FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
       [id]
     );
     const current = existing[0];
@@ -100,7 +101,7 @@ export async function updateUser(id, actorId, body) {
     const losingOwner = current.role === 'owner' && current.is_active && (nextRole !== 'owner' || !nextActive);
     if (losingOwner) {
       const { rows: owners } = await db.query(
-        "SELECT COUNT(*)::int AS cnt FROM users WHERE role = 'owner' AND is_active = TRUE AND id <> $1",
+        "SELECT COUNT(*)::int AS cnt FROM users WHERE role = 'owner' AND is_active = TRUE AND deleted_at IS NULL AND id <> $1",
         [id]
       );
       if (owners[0].cnt < 1) {
@@ -154,7 +155,7 @@ export async function unlockUser(id) {
   const { rows } = await query(
     `UPDATE users
         SET failed_logins = 0, locked_until = NULL
-      WHERE id = $1
+      WHERE id = $1 AND deleted_at IS NULL
       RETURNING id, username, full_name, role, is_active, must_change_password,
                 locked_until, last_login_at, created_at`,
     [id]
@@ -167,13 +168,101 @@ export async function signOutEverywhere(id) {
   const { rows } = await query(
     `UPDATE users
         SET session_version = session_version + 1
-      WHERE id = $1
+      WHERE id = $1 AND deleted_at IS NULL
       RETURNING id, username, full_name, role, is_active, must_change_password,
                 locked_until, last_login_at, created_at`,
     [id]
   );
   if (!rows[0]) throw notFound('User not found.');
   return mapUser(rows[0]);
+}
+
+// Deleting a user is a soft delete: the row stays, because orders, cash sessions, stock movements and
+// the activity log all point at it (and the app is never allowed to DELETE rows). The user disappears
+// from the list, can no longer sign in, and the username becomes free to use again.
+export async function deleteUser(rawId, actorId) {
+  const id = parseId(rawId, 'user id');
+  if (id === actorId) throw badRequest('You cannot delete your own account.');
+
+  return withTransaction(async (db) => {
+    const { rows } = await db.query(
+      `SELECT id, username, full_name, role, is_active
+         FROM users
+        WHERE id = $1 AND deleted_at IS NULL
+          FOR UPDATE`,
+      [id]
+    );
+    const current = rows[0];
+    if (!current) throw notFound('User not found.');
+
+    // The system must always keep one active owner who can sign in
+    if (current.role === 'owner' && current.is_active) {
+      const { rows: owners } = await db.query(
+        `SELECT COUNT(*)::int AS cnt FROM users
+          WHERE role = 'owner' AND is_active = TRUE AND deleted_at IS NULL AND id <> $1`,
+        [id]
+      );
+      if (owners[0].cnt < 1) throw badRequest('The system must always keep at least one active owner.');
+    }
+
+    // A cash drawer that is still open must be closed (and counted) first
+    const { rows: open } = await db.query(
+      'SELECT 1 FROM cashier_sessions WHERE cashier_id = $1 AND closed_at IS NULL',
+      [id]
+    );
+    if (open[0]) {
+      throw conflict(`${current.full_name} still has an open cash session. Close it before deleting this account.`);
+    }
+
+    // is_active = FALSE and a new session_version end every signed-in session and block sign-in
+    await db.query(
+      `UPDATE users
+          SET deleted_at = now(),
+              is_active = FALSE,
+              session_version = session_version + 1,
+              failed_logins = 0,
+              locked_until = NULL
+        WHERE id = $1`,
+      [id]
+    );
+    return { id: current.id, username: current.username, fullName: current.full_name, role: current.role };
+  });
+}
+
+// Menu management (owner): a disabled food or food tray is hidden from the POS and cannot be sold or
+// cooked. Its stock and history stay as they are. Answers { changed: false } if it was already so.
+export async function setMenuItemEnabled(rawId, body) {
+  const id = parseId(rawId, 'item id');
+  const enabled = bool(body?.enabled, 'Enabled');
+
+  return withTransaction(async (db) => {
+    const { rows } = await db.query(
+      `SELECT id, name, item_type, is_enabled
+         FROM items
+        WHERE id = $1 AND is_active
+          FOR UPDATE`,
+      [id]
+    );
+    const item = rows[0];
+    if (!item) throw notFound('Menu item not found.');
+    if (item.item_type === 'ingredient') throw badRequest('Only menu items can be enabled or disabled.');
+
+    const stock = await db.query(
+      'SELECT qty_usable, unit FROM v_item_stock WHERE item_id = $1',
+      [id]
+    );
+    const result = {
+      id: item.id,
+      name: item.name,
+      type: item.item_type,
+      isEnabled: enabled,
+      qtyUsable: stock.rows[0]?.qty_usable ?? 0,
+      unit: stock.rows[0]?.unit ?? '',
+      changed: item.is_enabled !== enabled,
+    };
+    if (result.changed) await db.query('UPDATE items SET is_enabled = $2 WHERE id = $1', [id, enabled]);
+    return result;
+  });
 }
 
 export async function updateShopSettings(body) {

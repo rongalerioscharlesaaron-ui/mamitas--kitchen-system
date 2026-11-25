@@ -34,6 +34,15 @@ export function OrderProvider({ children }) {
   const loadMenu = useCallback(async () => {
     const data = await api.get('/menu');
     setMenuItems(data.items);
+    // An item the owner disabled disappears from the menu. Take it out of the open order too,
+    // so it is not sent to the server and the order is not refused.
+    const onMenu = new Set(data.items.map((m) => m.id));
+    setCart((c) => {
+      const kept = c.filter((l) => onMenu.has(l.itemId));
+      if (kept.length === c.length) return c;
+      requestRef.current = null; // the order changed, so it is a new order
+      return kept;
+    });
   }, []);
 
   // Load the menu and shop settings when a cashier or owner logs in; clear everything on logout

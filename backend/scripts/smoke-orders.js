@@ -47,21 +47,28 @@ async function main() {
       (await api('GET', '/dashboard/sales')).status === 401);
 
     // ---------- Test menu items, made through the inventory API ----------
-    const make = async (name, price, qty, expiry) =>
-      (await api('POST', '/items', {
+    // Through the API a food is added by the tray (1 tray = 10 servings). These tests need exact odd
+    // quantities (3 and 5 servings), so the servings are put in directly (test-only shortcut).
+    const putIn = async (itemId, qty) =>
+      (await query(
+        `INSERT INTO inventory_batches (item_id, qty_received, qty_remaining)
+         VALUES ($1, $2, $2) RETURNING id`,
+        [itemId, qty]
+      )).rows[0];
+    const make = async (name, price, qty) => {
+      const data = (await api('POST', '/items', {
         cookie: K,
-        body: {
-          type: 'food', name, category: 'Main dishes', price, minLevel: 1, qty,
-          ...(expiry ? { expiry } : {}),
-        },
+        body: { type: 'food', name, category: 'Main dishes', price, minLevel: 1 },
       })).data;
+      return { ...data, batch: await putIn(data.item.id, qty) };
+    };
     const A = await make(N.a, 6, 10);
     const B = await make(N.b, 2.5, 3);
-    const Cc = await make(N.c, 4, 5, dayOffset(5));
+    const Cc = await make(N.c, 4, 5);
     const idA = A.item.id;
     const idB = B.item.id;
     const idC = Cc.item.id;
-    const second = await api('POST', `/items/${idA}/batches`, { cookie: K, body: { qty: 5 } });
+    const second = { data: { batch: await putIn(idA, 5) } };
     await query(
       `UPDATE inventory_batches SET received_date = CURRENT_DATE - 5, expiry_date = CURRENT_DATE - 1
         WHERE id = $1`,

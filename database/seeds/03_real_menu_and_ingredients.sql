@@ -4,7 +4,10 @@
 \set ON_ERROR_STOP on
 BEGIN;
 
-TRUNCATE stock_movements, payments, order_items, orders, inventory_batches, items, categories
+-- (recipe_ingredients comes from migration 007; it points at items, so it is emptied too.
+--  Load database/seeds/06_recipes.sql again afterwards to bring the recipes back.)
+TRUNCATE stock_movements, payments, order_items, orders, inventory_batches, recipe_ingredients,
+         items, categories
     RESTART IDENTITY;
 ALTER SEQUENCE batch_code_seq RESTART WITH 1;
 UPDATE counters SET last_value = 0 WHERE name = 'order_number';

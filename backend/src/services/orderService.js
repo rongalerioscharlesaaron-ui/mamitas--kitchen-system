@@ -139,13 +139,19 @@ export async function placeOrder(user, body) {
       // Ordered by id, so two orders locking the same items always lock them in the same order
       const ids = [...wanted.keys()].sort((x, y) => x - y);
       const found = await db.query(
-        `SELECT id, name, price
+        `SELECT id, name, price, is_enabled
            FROM items
           WHERE id = ANY($1::int[]) AND is_active AND item_type <> 'ingredient'
           ORDER BY id`,
         [ids]
       );
       if (found.rows.length !== ids.length) throw badRequest('One of the items is not on the menu.');
+      const disabled = found.rows.filter((r) => !r.is_enabled).map((r) => r.name);
+      if (disabled.length > 0) {
+        throw badRequest(
+          `${disabled.join(', ')} ${disabled.length === 1 ? 'is' : 'are'} no longer on the menu. Remove ${disabled.length === 1 ? 'it' : 'them'} from the order.`
+        );
+      }
 
       const lines = found.rows.map((r) => ({
         itemId: r.id,

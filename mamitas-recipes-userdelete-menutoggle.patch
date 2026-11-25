@@ -1,0 +1,2595 @@
+diff --git a/backend/scripts/set-user.js b/backend/scripts/set-user.js
+index b94de33..8d97908 100644
+--- a/backend/scripts/set-user.js
++++ b/backend/scripts/set-user.js
+@@ -68,7 +68,7 @@ async function main() {
+   }
+ 
+   const found = await query(
+-    'SELECT id, full_name, role FROM users WHERE lower(username) = lower($1)',
++    'SELECT id, full_name, role FROM users WHERE lower(username) = lower($1) AND deleted_at IS NULL',
+     [username]
+   );
+   const existing = found.rows[0];
+diff --git a/backend/scripts/smoke-adjust.js b/backend/scripts/smoke-adjust.js
+index d27aa48..392b49e 100644
+--- a/backend/scripts/smoke-adjust.js
++++ b/backend/scripts/smoke-adjust.js
+@@ -45,9 +45,9 @@ async function main() {
+ 
+     const dish = await api('POST', '/items', {
+       cookie: K,
+-      body: { type: 'food', name: N.dish, category: 'Main dishes', price: 5, minLevel: 2, qty: 10 },
++      body: { type: 'food', name: N.dish, category: 'Main dishes', price: 5, minLevel: 2, trays: 1 },
+     });
+-    check('Test dish created with 10 servings (201)', dish.status === 201, `got ${dish.status}`);
++    check('Test dish created with 1 tray = 10 servings (201)', dish.status === 201, `got ${dish.status}`);
+     const dishId = dish.data.item.id;
+     const dishBatch = dish.data.batch;
+ 
+diff --git a/backend/scripts/smoke-inventory.js b/backend/scripts/smoke-inventory.js
+index f54a6b2..4cc1e3c 100644
+--- a/backend/scripts/smoke-inventory.js
++++ b/backend/scripts/smoke-inventory.js
+@@ -88,20 +88,27 @@ async function main() {
+ 
+     const dish = await api('POST', '/items', {
+       cookie: K,
+-      body: { type: 'food', name: names.dish, category: 'Sides', price: 4.5, minLevel: 5, qty: 10 },
++      body: { type: 'food', name: names.dish, category: 'Sides', price: 4.5, minLevel: 5, trays: 1 },
+     });
+-    check('A food is created with 10 servings (201)',
++    check('A food is created with 1 tray = 10 servings (201)',
+       dish.status === 201 && dish.data?.item?.qtyUsable === 10, `got ${dish.status}`);
+     const dishId = dish.data?.item?.id;
+     const dishBatch = dish.data?.batch;
+ 
+     const fractional = await api('POST', '/items', {
+       cookie: K,
+-      body: { type: 'food', name: `${names.dish} frac`, category: 'Sides', price: 4, minLevel: 1, qty: 2.5 },
++      body: { type: 'food', name: `${names.dish} frac`, category: 'Sides', price: 4, minLevel: 1, trays: 2.5 },
+     });
+-    check('2.5 servings is refused: whole numbers only (400)', fractional.status === 400,
++    check('2.5 trays is refused: whole trays only (400)', fractional.status === 400,
+       `got ${fractional.status}`);
+ 
++    const foodQty = await api('POST', '/items', {
++      cookie: K,
++      body: { type: 'food', name: `${names.dish} qty`, category: 'Sides', price: 4, minLevel: 1, qty: 10 },
++    });
++    check('A food cannot be created with a quantity: it is added by the tray (400)',
++      foodQty.status === 400, `got ${foodQty.status}`);
++
+     const salt = await api('POST', '/items', {
+       cookie: K,
+       body: {
+diff --git a/backend/scripts/smoke-menu.js b/backend/scripts/smoke-menu.js
+index c80c3da..f9c9849 100644
+--- a/backend/scripts/smoke-menu.js
++++ b/backend/scripts/smoke-menu.js
+@@ -42,11 +42,11 @@ async function main() {
+     const dish = await api('POST', '/items', {
+       cookie: K,
+       body: {
+-        type: 'food', name: N.dish, category: 'Main dishes', price: 5, minLevel: 2, qty: 10,
++        type: 'food', name: N.dish, category: 'Main dishes', price: 5, minLevel: 2, trays: 1,
+         expiry: dayOffset(30),
+       },
+     });
+-    check('A dish is created with 10 servings and no expiry date is needed (201)',
++    check('A dish is created with 1 tray (10 servings) and no expiry date is needed (201)',
+       dish.status === 201, `got ${dish.status} ${JSON.stringify(dish.data)}`);
+     const dishId = dish.data?.item?.id;
+ 
+@@ -63,12 +63,13 @@ async function main() {
+       tray.status === 201 && tb?.expiryDate === today, `${tray.status} ${JSON.stringify(tb)}`);
+ 
+     const more = await api('POST', `/items/${dishId}/batches`, {
+-      cookie: K, body: { qty: 5, expiry: dayOffset(10) },
++      cookie: K, body: { trays: 1, expiry: dayOffset(10) },
+     });
+     const dishBatches = (await api('GET', `/batches?itemId=${dishId}`, { cookie: K })).data?.batches ?? [];
+-    check('Adding servings ignores any expiry date: still 2 deliveries, all expiring today, 15 available',
+-      more.status === 201 && dishBatches.length === 2 && dishBatches.every((b) => b.expiryDate === today)
+-        && (await food(dishId))?.qtyUsable === 15, `${more.status} ${JSON.stringify(dishBatches)}`);
++    check('Adding a tray ignores any expiry date: still 2 deliveries, all expiring today, 20 available',
++      more.status === 201 && more.data?.servings === 10 && dishBatches.length === 2
++        && dishBatches.every((b) => b.expiryDate === today)
++        && (await food(dishId))?.qtyUsable === 20, `${more.status} ${JSON.stringify(dishBatches)}`);
+ 
+     const raw = await query(
+       `INSERT INTO inventory_batches (item_id, qty_received, qty_remaining, expiry_date)
+@@ -99,8 +100,8 @@ async function main() {
+       (await loss(ingId, { type: 'DAMAGED', qty: 1, reason: 'Dropped' })).status === 400);
+ 
+     const lost = await loss(dishId, { type: 'DAMAGED', qty: 3, reason: 'Dropped' });
+-    check('3 damaged servings are taken from today\'s stock without choosing a batch (15 becomes 12)',
+-      lost.status === 200 && lost.data?.result?.remaining === 12 && (await food(dishId))?.qtyUsable === 12,
++    check('3 damaged servings are taken from today\'s stock without choosing a batch (20 becomes 17)',
++      lost.status === 200 && lost.data?.result?.remaining === 17 && (await food(dishId))?.qtyUsable === 17,
+       `${lost.status} ${JSON.stringify(lost.data)}`);
+     const dmgLog = await api('GET',
+       `/movements?kind=menu&type=DAMAGED&q=${encodeURIComponent(N.dish)}`, { cookie: K });
+@@ -108,17 +109,17 @@ async function main() {
+       (dmgLog.data?.movements ?? []).some((m) => m.type === 'DAMAGED' && m.qty === 3));
+ 
+     // ---------- Adjusting servings ----------
+-    check('Counting the same number is refused (400)', (await adjust(dishId, 12)).status === 400);
++    check('Counting the same number is refused (400)', (await adjust(dishId, 17)).status === 400);
+     check('Counting half a serving is refused (400)', (await adjust(dishId, 4.5)).status === 400);
+     check('An empty reason is refused (400)', (await adjust(dishId, 5, '')).status === 400);
+ 
+-    const up = await adjust(dishId, 20);
+-    check('Counting 20 when the system shows 12 gives +8',
+-      up.status === 200 && up.data?.result?.diff === 8 && (await food(dishId))?.qtyUsable === 20,
++    const up = await adjust(dishId, 25);
++    check('Counting 25 when the system shows 17 gives +8',
++      up.status === 200 && up.data?.result?.diff === 8 && (await food(dishId))?.qtyUsable === 25,
+       `${up.status} ${JSON.stringify(up.data)}`);
+-    const down = await adjust(dishId, 4);
+-    check('Counting 4 gives -16, taken oldest first',
+-      down.status === 200 && down.data?.result?.diff === -16 && (await food(dishId))?.qtyUsable === 4,
++    const down = await adjust(dishId, 9);
++    check('Counting 9 gives -16, taken oldest first',
++      down.status === 200 && down.data?.result?.diff === -16 && (await food(dishId))?.qtyUsable === 9,
+       `${down.status} ${JSON.stringify(down.data)}`);
+     const adjLog = (await api('GET',
+       `/movements?kind=menu&type=ADJUSTMENT&q=${encodeURIComponent(N.dish)}`, { cookie: K })).data?.movements ?? [];
+diff --git a/backend/scripts/smoke-orders.js b/backend/scripts/smoke-orders.js
+index f1135ec..58f0bc0 100644
+--- a/backend/scripts/smoke-orders.js
++++ b/backend/scripts/smoke-orders.js
+@@ -47,21 +47,28 @@ async function main() {
+       (await api('GET', '/dashboard/sales')).status === 401);
+ 
+     // ---------- Test menu items, made through the inventory API ----------
+-    const make = async (name, price, qty, expiry) =>
+-      (await api('POST', '/items', {
++    // Through the API a food is added by the tray (1 tray = 10 servings). These tests need exact odd
++    // quantities (3 and 5 servings), so the servings are put in directly (test-only shortcut).
++    const putIn = async (itemId, qty) =>
++      (await query(
++        `INSERT INTO inventory_batches (item_id, qty_received, qty_remaining)
++         VALUES ($1, $2, $2) RETURNING id`,
++        [itemId, qty]
++      )).rows[0];
++    const make = async (name, price, qty) => {
++      const data = (await api('POST', '/items', {
+         cookie: K,
+-        body: {
+-          type: 'food', name, category: 'Main dishes', price, minLevel: 1, qty,
+-          ...(expiry ? { expiry } : {}),
+-        },
++        body: { type: 'food', name, category: 'Main dishes', price, minLevel: 1 },
+       })).data;
++      return { ...data, batch: await putIn(data.item.id, qty) };
++    };
+     const A = await make(N.a, 6, 10);
+     const B = await make(N.b, 2.5, 3);
+-    const Cc = await make(N.c, 4, 5, dayOffset(5));
++    const Cc = await make(N.c, 4, 5);
+     const idA = A.item.id;
+     const idB = B.item.id;
+     const idC = Cc.item.id;
+-    const second = await api('POST', `/items/${idA}/batches`, { cookie: K, body: { qty: 5 } });
++    const second = { data: { batch: await putIn(idA, 5) } };
+     await query(
+       `UPDATE inventory_batches SET received_date = CURRENT_DATE - 5, expiry_date = CURRENT_DATE - 1
+         WHERE id = $1`,
+diff --git a/backend/src/routes/admin.routes.js b/backend/src/routes/admin.routes.js
+index 21c30b6..5429502 100644
+--- a/backend/src/routes/admin.routes.js
++++ b/backend/src/routes/admin.routes.js
+@@ -3,7 +3,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
+ import { parseId } from '../utils/validate.js';
+ import { audit } from '../utils/audit.js';
+ import {
+-  listUsers, createUser, updateUser, unlockUser, signOutEverywhere,
++  listUsers, createUser, updateUser, deleteUser, unlockUser, signOutEverywhere, setMenuItemEnabled,
+   updateShopSettings, listBackups, createBackup, getBackupPath,
+ } from '../services/adminService.js';
+ 
+@@ -41,6 +41,19 @@ router.patch('/users/:id', ...ownerOnly, async (req, res) => {
+   res.json({ user });
+ });
+ 
++// Soft delete: the user disappears and cannot sign in, but their history is kept
++router.delete('/users/:id', ...ownerOnly, async (req, res) => {
++  const user = await deleteUser(req.params.id, req.user.id);
++  await audit({
++    ...who(req),
++    action: 'admin.user_deleted',
++    entity: 'user',
++    entityId: user.id,
++    details: { username: user.username, fullName: user.fullName, role: user.role },
++  });
++  res.json({ user });
++});
++
+ router.post('/users/:id/unlock', ...ownerOnly, async (req, res) => {
+   const id = parseId(req.params.id, 'user id');
+   const user = await unlockUser(id);
+@@ -67,6 +80,22 @@ router.post('/users/:id/sign-out', ...ownerOnly, async (req, res) => {
+   res.json({ user });
+ });
+ 
++// Menu Management: body { enabled: true | false }. A disabled item is hidden from the POS and cannot be
++// sold or cooked; its stock and history stay.
++router.patch('/menu/:id', ...ownerOnly, async (req, res) => {
++  const item = await setMenuItemEnabled(req.params.id, req.body);
++  if (item.changed) {
++    await audit({
++      ...who(req),
++      action: item.isEnabled ? 'admin.menu_enabled' : 'admin.menu_disabled',
++      entity: 'item',
++      entityId: item.id,
++      details: { name: item.name, type: item.type, qtyUsable: item.qtyUsable },
++    });
++  }
++  res.json({ item });
++});
++
+ // System Configuration
+ router.patch('/shop', ...ownerOnly, async (req, res) => {
+   const shop = await updateShopSettings(req.body);
+diff --git a/backend/src/routes/auth.routes.js b/backend/src/routes/auth.routes.js
+index 6f741f0..737182f 100644
+--- a/backend/src/routes/auth.routes.js
++++ b/backend/src/routes/auth.routes.js
+@@ -50,7 +50,7 @@ router.post('/login', loginLimiter, async (req, res) => {
+             (locked_until IS NOT NULL AND locked_until > now()) AS is_locked,
+             CEIL(GREATEST(EXTRACT(EPOCH FROM (locked_until - now())), 0) / 60)::int AS minutes_left
+        FROM users
+-      WHERE lower(username) = lower($1)`,
++      WHERE lower(username) = lower($1) AND deleted_at IS NULL`,
+     [name]
+   );
+   const user = rows[0];
+diff --git a/backend/src/routes/items.routes.js b/backend/src/routes/items.routes.js
+index de1026f..d83424d 100644
+--- a/backend/src/routes/items.routes.js
++++ b/backend/src/routes/items.routes.js
+@@ -60,16 +60,26 @@ router.patch('/:id', ...staff, async (req, res) => {
+   res.json({ item: await getItem(itemId) });
+ });
+ 
++// Ingredients: { qty, expiry }. Foods: { trays }. Cooking trays of a dish takes the ingredients of its
++// recipe out of inventory (oldest batch first); the reply lists what was used.
+ router.post('/:id/batches', ...staff, async (req, res) => {
+-  const { batch, item } = await addBatch(req.user, req.params.id, req.body);
++  const { batch, item, food } = await addBatch(req.user, req.params.id, req.body);
+   await audit({
+     ...who(req),
+     action: 'batch.created',
+     entity: 'batch',
+     entityId: batch.id,
+-    details: { code: batch.code, item: item.name, qty: batch.qty, expiry: batch.expiry },
++    details: {
++      code: batch.code, item: item.name, qty: batch.qty, expiry: batch.expiry,
++      ...(food ? { trays: food.trays, ingredientsUsed: food.used } : {}),
++    },
++  });
++  res.status(201).json({
++    batch,
++    ...(food
++      ? { trays: food.trays, servings: food.servings, hasRecipe: food.hasRecipe, used: food.used }
++      : {}),
+   });
+-  res.status(201).json({ batch });
+ });
+ 
+ // Foods and trays: damaged or spoiled servings, taken from today's stock
+diff --git a/backend/src/services/adminService.js b/backend/src/services/adminService.js
+index f1ff84b..dec661e 100644
+--- a/backend/src/services/adminService.js
++++ b/backend/src/services/adminService.js
+@@ -9,7 +9,7 @@ import { env } from '../config/env.js';
+ import { security } from '../config/security.js';
+ import { shop as defaultShop } from '../config/shop.js';
+ import { badRequest, conflict, notFound } from '../utils/httpError.js';
+-import { text, number, oneOf, bool } from '../utils/validate.js';
++import { text, number, oneOf, bool, parseId } from '../utils/validate.js';
+ 
+ const execFileAsync = promisify(execFile);
+ const __dirname = path.dirname(fileURLToPath(import.meta.url));
+@@ -37,6 +37,7 @@ export async function listUsers() {
+     `SELECT id, username, full_name, role, is_active, must_change_password,
+             locked_until, last_login_at, created_at
+        FROM users
++      WHERE deleted_at IS NULL
+       ORDER BY id ASC`
+   );
+   return rows.map(mapUser);
+@@ -73,7 +74,7 @@ export async function createUser(body) {
+ export async function updateUser(id, actorId, body) {
+   return withTransaction(async (db) => {
+     const { rows: existing } = await db.query(
+-      'SELECT id, username, full_name, role, is_active FROM users WHERE id = $1 FOR UPDATE',
++      'SELECT id, username, full_name, role, is_active FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+       [id]
+     );
+     const current = existing[0];
+@@ -100,7 +101,7 @@ export async function updateUser(id, actorId, body) {
+     const losingOwner = current.role === 'owner' && current.is_active && (nextRole !== 'owner' || !nextActive);
+     if (losingOwner) {
+       const { rows: owners } = await db.query(
+-        "SELECT COUNT(*)::int AS cnt FROM users WHERE role = 'owner' AND is_active = TRUE AND id <> $1",
++        "SELECT COUNT(*)::int AS cnt FROM users WHERE role = 'owner' AND is_active = TRUE AND deleted_at IS NULL AND id <> $1",
+         [id]
+       );
+       if (owners[0].cnt < 1) {
+@@ -154,7 +155,7 @@ export async function unlockUser(id) {
+   const { rows } = await query(
+     `UPDATE users
+         SET failed_logins = 0, locked_until = NULL
+-      WHERE id = $1
++      WHERE id = $1 AND deleted_at IS NULL
+       RETURNING id, username, full_name, role, is_active, must_change_password,
+                 locked_until, last_login_at, created_at`,
+     [id]
+@@ -167,7 +168,7 @@ export async function signOutEverywhere(id) {
+   const { rows } = await query(
+     `UPDATE users
+         SET session_version = session_version + 1
+-      WHERE id = $1
++      WHERE id = $1 AND deleted_at IS NULL
+       RETURNING id, username, full_name, role, is_active, must_change_password,
+                 locked_until, last_login_at, created_at`,
+     [id]
+@@ -176,6 +177,94 @@ export async function signOutEverywhere(id) {
+   return mapUser(rows[0]);
+ }
+ 
++// Deleting a user is a soft delete: the row stays, because orders, cash sessions, stock movements and
++// the activity log all point at it (and the app is never allowed to DELETE rows). The user disappears
++// from the list, can no longer sign in, and the username becomes free to use again.
++export async function deleteUser(rawId, actorId) {
++  const id = parseId(rawId, 'user id');
++  if (id === actorId) throw badRequest('You cannot delete your own account.');
++
++  return withTransaction(async (db) => {
++    const { rows } = await db.query(
++      `SELECT id, username, full_name, role, is_active
++         FROM users
++        WHERE id = $1 AND deleted_at IS NULL
++          FOR UPDATE`,
++      [id]
++    );
++    const current = rows[0];
++    if (!current) throw notFound('User not found.');
++
++    // The system must always keep one active owner who can sign in
++    if (current.role === 'owner' && current.is_active) {
++      const { rows: owners } = await db.query(
++        `SELECT COUNT(*)::int AS cnt FROM users
++          WHERE role = 'owner' AND is_active = TRUE AND deleted_at IS NULL AND id <> $1`,
++        [id]
++      );
++      if (owners[0].cnt < 1) throw badRequest('The system must always keep at least one active owner.');
++    }
++
++    // A cash drawer that is still open must be closed (and counted) first
++    const { rows: open } = await db.query(
++      'SELECT 1 FROM cashier_sessions WHERE cashier_id = $1 AND closed_at IS NULL',
++      [id]
++    );
++    if (open[0]) {
++      throw conflict(`${current.full_name} still has an open cash session. Close it before deleting this account.`);
++    }
++
++    // is_active = FALSE and a new session_version end every signed-in session and block sign-in
++    await db.query(
++      `UPDATE users
++          SET deleted_at = now(),
++              is_active = FALSE,
++              session_version = session_version + 1,
++              failed_logins = 0,
++              locked_until = NULL
++        WHERE id = $1`,
++      [id]
++    );
++    return { id: current.id, username: current.username, fullName: current.full_name, role: current.role };
++  });
++}
++
++// Menu management (owner): a disabled food or food tray is hidden from the POS and cannot be sold or
++// cooked. Its stock and history stay as they are. Answers { changed: false } if it was already so.
++export async function setMenuItemEnabled(rawId, body) {
++  const id = parseId(rawId, 'item id');
++  const enabled = bool(body?.enabled, 'Enabled');
++
++  return withTransaction(async (db) => {
++    const { rows } = await db.query(
++      `SELECT id, name, item_type, is_enabled
++         FROM items
++        WHERE id = $1 AND is_active
++          FOR UPDATE`,
++      [id]
++    );
++    const item = rows[0];
++    if (!item) throw notFound('Menu item not found.');
++    if (item.item_type === 'ingredient') throw badRequest('Only menu items can be enabled or disabled.');
++
++    const stock = await db.query(
++      'SELECT qty_usable, unit FROM v_item_stock WHERE item_id = $1',
++      [id]
++    );
++    const result = {
++      id: item.id,
++      name: item.name,
++      type: item.item_type,
++      isEnabled: enabled,
++      qtyUsable: stock.rows[0]?.qty_usable ?? 0,
++      unit: stock.rows[0]?.unit ?? '',
++      changed: item.is_enabled !== enabled,
++    };
++    if (result.changed) await db.query('UPDATE items SET is_enabled = $2 WHERE id = $1', [id, enabled]);
++    return result;
++  });
++}
++
+ export async function updateShopSettings(body) {
+   const name = text(body?.name ?? defaultShop.name, 'Business name', { min: 2, max: 100 });
+   const location = text(body?.location ?? defaultShop.location, 'Location', { min: 2, max: 100 });
+diff --git a/backend/src/services/batchService.js b/backend/src/services/batchService.js
+index c0b625b..857a22c 100644
+--- a/backend/src/services/batchService.js
++++ b/backend/src/services/batchService.js
+@@ -2,6 +2,7 @@ import { query, withTransaction } from '../config/db.js';
+ import { badRequest, notFound } from '../utils/httpError.js';
+ import { number, date, oneOf, text, parseId } from '../utils/validate.js';
+ import { todaySG } from '../utils/dates.js';
++import { addFoodTrays, MAX_TRAYS } from './menuStockService.js';
+ 
+ export const EXPIRY_STATUSES = ['expired', 'soon', 'ok', 'none'];
+ 
+@@ -76,6 +77,23 @@ export async function addBatch(user, rawItemId, body) {
+   const item = found.rows[0];
+   if (!item) throw notFound('Item not found.');
+ 
++  // Foods are added by the tray (1 tray = 10 servings). The ingredients of the dish's recipe are
++  // taken from inventory, oldest batch first, in the same all-or-nothing transaction.
++  if (item.item_type === 'food') {
++    if (b.trays === undefined && b.qty !== undefined) {
++      throw badRequest('Foods are added by the tray. Enter the number of trays.');
++    }
++    const trays = number(b.trays, 'Trays', { min: 1, max: MAX_TRAYS, integer: true });
++    const food = await withTransaction((db) =>
++      addFoodTrays(db, { itemId, trays, userId: user.id })
++    );
++    return {
++      batch: { id: food.batchId, code: food.batchCode, qty: food.servings, expiry: null },
++      item,
++      food,
++    };
++  }
++
+   const isIngredient = item.item_type === 'ingredient';
+   const qty = number(b.qty, 'Quantity', { min: 0.001, max: 1000000, integer: !isIngredient });
+   // Foods and trays are cooked fresh for the day: no expiry date is asked for, and the
+diff --git a/backend/src/services/dashboardService.js b/backend/src/services/dashboardService.js
+index 665e48b..5734820 100644
+--- a/backend/src/services/dashboardService.js
++++ b/backend/src/services/dashboardService.js
+@@ -61,7 +61,8 @@ export async function inventoryDashboard() {
+     pool.query(
+       `SELECT item_id, name, item_type, category, unit, min_level,
+               CASE WHEN item_type = 'ingredient' THEN qty_on_hand ELSE qty_usable END AS stock
+-         FROM v_item_stock`
++         FROM v_item_stock
++        WHERE is_enabled`
+     ),
+     pool.query(
+       `SELECT expiry_status, COUNT(*)::int AS n
+diff --git a/backend/src/services/itemService.js b/backend/src/services/itemService.js
+index 77476db..2e533d3 100644
+--- a/backend/src/services/itemService.js
++++ b/backend/src/services/itemService.js
+@@ -3,6 +3,7 @@ import { badRequest, notFound, conflict, forbidden } from '../utils/httpError.js
+ import { number, date, oneOf, text, bool, parseId } from '../utils/validate.js';
+ import { todaySG } from '../utils/dates.js';
+ import { insertBatch } from './batchService.js';
++import { addFoodTrays, MAX_TRAYS } from './menuStockService.js';
+ 
+ const statusOf = (qty, min) => (qty <= 0 ? 'out' : qty <= min ? 'low' : 'in');
+ 
+@@ -22,6 +23,8 @@ function mapItem(r) {
+     qtyUsable: r.qty_usable,
+     openBatches: r.open_batches,
+     nextExpiry: r.next_expiry,
++    servingsPerTray: r.servings_per_tray, // foods are cooked by the tray: 1 tray = 10 servings
++    isEnabled: r.is_enabled, // the owner can disable a menu item: hidden from the POS, cannot be sold or cooked
+     status: statusOf(stock, r.min_level),
+   };
+ }
+@@ -40,10 +43,10 @@ export async function listItems(type = null) {
+   return rows.map(mapItem);
+ }
+ 
+-// What the cashier sells: foods and food trays
++// What the cashier sells: foods and food trays that are enabled (a disabled item is hidden from the POS)
+ export async function listMenu() {
+   const { rows } = await query(
+-    `SELECT * FROM v_item_stock WHERE item_type <> 'ingredient' ORDER BY category, name`
++    `SELECT * FROM v_item_stock WHERE item_type <> 'ingredient' AND is_enabled ORDER BY category, name`
+   );
+   return rows.map(mapItem);
+ }
+@@ -63,6 +66,7 @@ export async function createItem(user, body) {
+   const b = body ?? {};
+   const type = oneOf(b.type, 'Type', ['ingredient', 'food', 'food_tray']);
+   const isIngredient = type === 'ingredient';
++  const isFood = type === 'food';
+ 
+   const name = text(b.name, 'Name', { max: 100 });
+   const unit =
+@@ -78,13 +82,26 @@ export async function createItem(user, body) {
+     : number(b.price, 'Price', { min: 0.01, max: 100000, decimals: 2 });
+   const categoryName =
+     type === 'food_tray' ? 'Food trays' : text(b.category, 'Category', { max: 50 });
+-  const qty =
+-    number(b.qty, 'Starting quantity', {
+-      min: 0,
+-      max: 1000000,
+-      integer: !isIngredient,
+-      allowEmpty: true,
+-    }) ?? 0;
++  // Foods start with trays (1 tray = 10 servings). Ingredients and food trays start with a quantity.
++  if (isFood && b.qty !== undefined && b.qty !== null && b.qty !== '') {
++    throw badRequest('Foods are added by the tray. Send the number of trays, not a quantity.');
++  }
++  const qty = isFood
++    ? 0
++    : number(b.qty, 'Starting quantity', {
++        min: 0,
++        max: 1000000,
++        integer: !isIngredient,
++        allowEmpty: true,
++      }) ?? 0;
++  const trays = isFood
++    ? number(b.trays, 'Trays cooked today', {
++        min: 0,
++        max: MAX_TRAYS,
++        integer: true,
++        allowEmpty: true,
++      }) ?? 0
++    : 0;
+   // Foods and trays are cooked fresh for the day, so no expiry date is entered for them
+   const expiry = isIngredient ? date(b.expiry, 'Expiry date', { allowEmpty: true }) : null;
+ 
+@@ -116,7 +133,13 @@ export async function createItem(user, body) {
+     const itemId = inserted.rows[0].id;
+ 
+     let batch = null;
+-    if (qty > 0) {
++    if (isFood && trays > 0) {
++      // A new dish has no recipe yet, so only its servings are added (nothing is taken from inventory)
++      const food = await addFoodTrays(db, {
++        itemId, trays, userId: user.id, reason: 'Initial stock',
++      });
++      batch = { id: food.batchId, code: food.batchCode };
++    } else if (qty > 0) {
+       batch = await insertBatch(db, {
+         itemId,
+         qty,
+diff --git a/backend/src/services/menuStockService.js b/backend/src/services/menuStockService.js
+index 59b33ea..f25297a 100644
+--- a/backend/src/services/menuStockService.js
++++ b/backend/src/services/menuStockService.js
+@@ -36,6 +36,21 @@ const move = (db, itemId, batchId, type, qty, reason, userId) =>
+     [itemId, batchId, type, qty, reason, userId]
+   );
+ 
++// The most trays that can be added in one go (1 tray = 10 servings)
++export const MAX_TRAYS = 100;
++
++// Foods are cooked and added by the tray. The database function takes the ingredients of the
++// dish's recipe out of inventory (oldest batch first), adds today's servings, and logs both.
++// If an ingredient is short it raises an error that lists every shortage and changes nothing.
++// A dish without a recipe still gets its servings (hasRecipe is false). Run it inside a transaction.
++// Resolves to { batchId, batchCode, trays, servings, servingsPerTray, hasRecipe, used: [{ name, unit, qty }] }
++export async function addFoodTrays(db, { itemId, trays, userId, reason = null }) {
++  const { rows } = await db.query('SELECT fn_add_menu_trays($1, $2, $3, $4) AS result', [
++    itemId, trays, userId, reason,
++  ]);
++  return rows[0].result;
++}
++
+ // Damaged or spoiled servings come off today's stock, oldest first
+ export async function recordMenuLoss(user, rawItemId, body) {
+   const b = body ?? {};
+diff --git a/backend/src/services/orderService.js b/backend/src/services/orderService.js
+index 7f65575..4d7850d 100644
+--- a/backend/src/services/orderService.js
++++ b/backend/src/services/orderService.js
+@@ -139,13 +139,19 @@ export async function placeOrder(user, body) {
+       // Ordered by id, so two orders locking the same items always lock them in the same order
+       const ids = [...wanted.keys()].sort((x, y) => x - y);
+       const found = await db.query(
+-        `SELECT id, name, price
++        `SELECT id, name, price, is_enabled
+            FROM items
+           WHERE id = ANY($1::int[]) AND is_active AND item_type <> 'ingredient'
+           ORDER BY id`,
+         [ids]
+       );
+       if (found.rows.length !== ids.length) throw badRequest('One of the items is not on the menu.');
++      const disabled = found.rows.filter((r) => !r.is_enabled).map((r) => r.name);
++      if (disabled.length > 0) {
++        throw badRequest(
++          `${disabled.join(', ')} ${disabled.length === 1 ? 'is' : 'are'} no longer on the menu. Remove ${disabled.length === 1 ? 'it' : 'them'} from the order.`
++        );
++      }
+ 
+       const lines = found.rows.map((r) => ({
+         itemId: r.id,
+diff --git a/database/migrations/007_recipe_deduction.sql b/database/migrations/007_recipe_deduction.sql
+new file mode 100644
+index 0000000..6b0a897
+--- /dev/null
++++ b/database/migrations/007_recipe_deduction.sql
+@@ -0,0 +1,248 @@
++-- =====================================================================
++-- 007: recipes, and cooking by the tray
++--
++-- A dish is cooked and added to the menu by the TRAY: 1 tray = servings_per_tray servings (10).
++-- Adding trays of a dish takes the ingredients of its recipe out of inventory, oldest batch
++-- first (FIFO), in the same transaction. If any ingredient is short, nothing is saved.
++--
++-- Safe to run more than once. On an existing database run it on its own, then load the recipes
++-- with database/seeds/06_recipes.sql:
++--   psql -U postgres -h localhost -d mamitas_kitchen -v ON_ERROR_STOP=1 -1 \
++--        -f database/migrations/007_recipe_deduction.sql
++-- =====================================================================
++
++-- ---------- Servings per tray (used by foods only) ----------
++ALTER TABLE items ADD COLUMN IF NOT EXISTS servings_per_tray SMALLINT NOT NULL DEFAULT 10;
++ALTER TABLE items DROP CONSTRAINT IF EXISTS items_servings_per_tray_positive;
++ALTER TABLE items ADD CONSTRAINT items_servings_per_tray_positive CHECK (servings_per_tray > 0);
++
++-- The menu pages read it from this view (new columns can only be added at the end)
++CREATE OR REPLACE VIEW v_item_stock AS
++SELECT i.id AS item_id,
++       i.name,
++       i.item_type,
++       c.name AS category,
++       i.unit,
++       i.min_level,
++       i.price,
++       i.has_expiry,
++       COALESCE(SUM(b.qty_remaining), 0) AS qty_on_hand,
++       COALESCE(SUM(b.qty_remaining)
++                FILTER (WHERE b.expiry_date IS NULL OR b.expiry_date >= CURRENT_DATE), 0) AS qty_usable,
++       COUNT(b.id) FILTER (WHERE b.qty_remaining > 0) AS open_batches,
++       MIN(b.expiry_date) FILTER (WHERE b.qty_remaining > 0 AND b.expiry_date IS NOT NULL) AS next_expiry,
++       i.servings_per_tray
++FROM items i
++JOIN categories c ON c.id = i.category_id
++LEFT JOIN inventory_batches b ON b.item_id = i.id
++WHERE i.is_active
++GROUP BY i.id, c.name;
++
++-- ---------- Recipes: what one tray of a dish uses ----------
++-- is_optional: listed in the recipe but not always used. It is NOT taken from inventory.
++-- alt_group / alt_rank: lines that share an alt_group are "this OR that" choices. The first choice
++-- that has enough stock is used (alt_rank 1 is tried first).
++CREATE TABLE IF NOT EXISTS recipe_ingredients (
++    id                  INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
++    menu_item_id        INTEGER       NOT NULL REFERENCES items (id),
++    ingredient_item_id  INTEGER       NOT NULL REFERENCES items (id),
++    qty_per_tray        NUMERIC(12,3) NOT NULL CHECK (qty_per_tray > 0),
++    is_optional         BOOLEAN       NOT NULL DEFAULT FALSE,
++    alt_group           SMALLINT,
++    alt_rank            SMALLINT,
++    CONSTRAINT recipe_one_line_per_ingredient UNIQUE (menu_item_id, ingredient_item_id),
++    CONSTRAINT recipe_alt_columns_together CHECK ((alt_group IS NULL) = (alt_rank IS NULL)),
++    CONSTRAINT recipe_alt_rank_unique UNIQUE (menu_item_id, alt_group, alt_rank)
++);
++
++-- A recipe belongs to a food (sold per serving) and lists only ingredients
++CREATE OR REPLACE FUNCTION fn_check_recipe_rules() RETURNS trigger AS $$
++DECLARE
++    menu_type  item_type;
++    ingr_type  item_type;
++BEGIN
++    SELECT item_type INTO menu_type FROM items WHERE id = NEW.menu_item_id;
++    SELECT item_type INTO ingr_type FROM items WHERE id = NEW.ingredient_item_id;
++
++    IF menu_type IS DISTINCT FROM 'food' THEN
++        RAISE EXCEPTION 'A recipe can only belong to a food (sold per serving)'
++            USING ERRCODE = '23514';
++    END IF;
++    IF ingr_type IS DISTINCT FROM 'ingredient' THEN
++        RAISE EXCEPTION 'A recipe can only list ingredients'
++            USING ERRCODE = '23514';
++    END IF;
++    RETURN NEW;
++END;
++$$ LANGUAGE plpgsql;
++
++DROP TRIGGER IF EXISTS recipe_rules ON recipe_ingredients;
++CREATE TRIGGER recipe_rules
++    BEFORE INSERT OR UPDATE OF menu_item_id, ingredient_item_id
++    ON recipe_ingredients
++    FOR EACH ROW EXECUTE FUNCTION fn_check_recipe_rules();
++
++-- ---------- Small helpers ----------
++-- 3.000 -> 3, 0.080 -> 0.08 (for readable messages)
++CREATE OR REPLACE FUNCTION fn_fmt_qty(p NUMERIC) RETURNS TEXT AS $$
++    SELECT CASE WHEN p IS NULL THEN '0'
++                WHEN position('.' IN p::text) > 0 THEN rtrim(rtrim(p::text, '0'), '.')
++                ELSE p::text END;
++$$ LANGUAGE sql IMMUTABLE;
++
++-- Stock of an item that can still be used today (batches that have not expired)
++CREATE OR REPLACE FUNCTION fn_usable_qty(p_item_id INTEGER) RETURNS NUMERIC AS $$
++    SELECT COALESCE(SUM(qty_remaining), 0)
++      FROM inventory_batches
++     WHERE item_id = p_item_id
++       AND qty_remaining > 0
++       AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE);
++$$ LANGUAGE sql STABLE;
++
++-- ---------- Add trays of a dish and take its ingredients ----------
++-- 1. Works out what the trays need: every required line of the recipe times the number of trays.
++--    For an "or" group, the first choice with enough stock is used. Optional lines are skipped.
++-- 2. If anything is short it raises ONE error that lists every shortage, and changes nothing.
++-- 3. Otherwise takes the ingredients oldest batch first (fn_consume_stock, logged as USED),
++--    then adds a batch of servings (trays x servings_per_tray) for today and logs it as IN.
++-- A dish with no recipe still gets its servings; hasRecipe is false so the app can say so.
++-- Call it inside a transaction so everything rolls back together.
++CREATE OR REPLACE FUNCTION fn_add_menu_trays(
++    p_item_id INTEGER,
++    p_trays   INTEGER,
++    p_user_id INTEGER,
++    p_reason  TEXT DEFAULT NULL
++) RETURNS JSONB AS $$
++DECLARE
++    v_item        items%ROWTYPE;
++    v_servings    INTEGER;
++    v_tray_word   TEXT;
++    v_plan        JSONB   := '[]'::jsonb;      -- ingredients to take: [{id, name, unit, qty}]
++    v_used        JSONB   := '[]'::jsonb;      -- what was really taken
++    v_short       TEXT[]  := ARRAY[]::TEXT[];  -- one message per shortage
++    v_tried       TEXT[];
++    v_picked      BOOLEAN;
++    v_have        NUMERIC;
++    v_batch_id    INTEGER;
++    v_batch_code  TEXT;
++    g             RECORD;
++    r             RECORD;
++BEGIN
++    IF p_trays IS NULL OR p_trays < 1 THEN
++        RAISE EXCEPTION 'Trays must be a whole number of at least 1';
++    END IF;
++
++    SELECT * INTO v_item FROM items WHERE id = p_item_id AND is_active;
++    IF NOT FOUND THEN
++        RAISE EXCEPTION 'Item not found';
++    END IF;
++    IF v_item.item_type <> 'food' THEN
++        RAISE EXCEPTION '"%" is not a dish sold per serving, so it is not added by the tray', v_item.name;
++    END IF;
++
++    v_servings  := p_trays * v_item.servings_per_tray;
++    v_tray_word := CASE WHEN p_trays = 1 THEN 'tray' ELSE 'trays' END;
++
++    -- Required lines with a single choice
++    FOR r IN
++        SELECT ri.ingredient_item_id AS id, i.name, i.unit, ri.qty_per_tray * p_trays AS need
++          FROM recipe_ingredients ri
++          JOIN items i ON i.id = ri.ingredient_item_id
++         WHERE ri.menu_item_id = p_item_id
++           AND NOT ri.is_optional
++           AND ri.alt_group IS NULL
++         ORDER BY ri.id
++    LOOP
++        v_have := fn_usable_qty(r.id);
++        IF v_have < r.need THEN
++            v_short := v_short || format('%s needs %s %s, only %s %s available',
++                                         r.name, fn_fmt_qty(r.need), r.unit, fn_fmt_qty(v_have), r.unit);
++        ELSE
++            v_plan := v_plan || jsonb_build_object('id', r.id, 'name', r.name, 'unit', r.unit, 'qty', r.need);
++        END IF;
++    END LOOP;
++
++    -- "This or that" groups: the first choice with enough stock wins
++    FOR g IN
++        SELECT DISTINCT alt_group
++          FROM recipe_ingredients
++         WHERE menu_item_id = p_item_id
++           AND NOT is_optional
++           AND alt_group IS NOT NULL
++         ORDER BY alt_group
++    LOOP
++        v_picked := FALSE;
++        v_tried  := ARRAY[]::TEXT[];
++        FOR r IN
++            SELECT ri.ingredient_item_id AS id, i.name, i.unit, ri.qty_per_tray * p_trays AS need
++              FROM recipe_ingredients ri
++              JOIN items i ON i.id = ri.ingredient_item_id
++             WHERE ri.menu_item_id = p_item_id
++               AND NOT ri.is_optional
++               AND ri.alt_group = g.alt_group
++             ORDER BY ri.alt_rank
++        LOOP
++            v_have := fn_usable_qty(r.id);
++            IF v_have >= r.need THEN
++                v_plan   := v_plan || jsonb_build_object('id', r.id, 'name', r.name, 'unit', r.unit, 'qty', r.need);
++                v_picked := TRUE;
++                EXIT;
++            END IF;
++            v_tried := v_tried || format('%s needs %s %s, only %s %s available',
++                                         r.name, fn_fmt_qty(r.need), r.unit, fn_fmt_qty(v_have), r.unit);
++        END LOOP;
++        IF NOT v_picked THEN
++            v_short := v_short || ('none of these has enough: ' || array_to_string(v_tried, ' / '));
++        END IF;
++    END LOOP;
++
++    IF cardinality(v_short) > 0 THEN
++        RAISE EXCEPTION 'Not enough ingredients for % % of %: %',
++            p_trays, v_tray_word, v_item.name, array_to_string(v_short, '; ');
++    END IF;
++
++    -- Take the ingredients, oldest batch first. Always in the same order (by item id), so two
++    -- cooks at the same moment lock the same batches in the same order and cannot deadlock.
++    FOR r IN
++        SELECT (e->>'id')::INTEGER AS id, e->>'name' AS name, e->>'unit' AS unit, (e->>'qty')::NUMERIC AS qty
++          FROM jsonb_array_elements(v_plan) AS e
++         ORDER BY 1
++    LOOP
++        PERFORM fn_consume_stock(
++            r.id, r.qty, NULL, p_user_id,
++            format('Cooked %s %s of %s', p_trays, v_tray_word, v_item.name));
++        v_used := v_used || jsonb_build_object('name', r.name, 'unit', r.unit, 'qty', r.qty);
++    END LOOP;
++
++    -- The servings, available until the end of today (the batch rules set the expiry date)
++    INSERT INTO inventory_batches (item_id, qty_received, qty_remaining, created_by)
++    VALUES (p_item_id, v_servings, v_servings, p_user_id)
++    RETURNING id, batch_code INTO v_batch_id, v_batch_code;
++
++    INSERT INTO stock_movements (item_id, batch_id, movement_type, qty, reason, user_id)
++    VALUES (p_item_id, v_batch_id, 'IN', v_servings,
++            COALESCE(p_reason, format('%s %s cooked (%s servings)', p_trays, v_tray_word, v_servings)),
++            p_user_id);
++
++    RETURN jsonb_build_object(
++        'batchId',         v_batch_id,
++        'batchCode',       v_batch_code,
++        'trays',           p_trays,
++        'servings',        v_servings,
++        'servingsPerTray', v_item.servings_per_tray,
++        'hasRecipe',       jsonb_array_length(v_plan) > 0,
++        'used',            v_used
++    );
++END;
++$$ LANGUAGE plpgsql;
++
++-- ---------- Permissions for the app user ----------
++DO $$
++BEGIN
++    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mk_app') THEN
++        GRANT SELECT ON recipe_ingredients TO mk_app;
++        REVOKE EXECUTE ON FUNCTION fn_add_menu_trays(INTEGER, INTEGER, INTEGER, TEXT) FROM PUBLIC;
++        GRANT EXECUTE ON FUNCTION fn_add_menu_trays(INTEGER, INTEGER, INTEGER, TEXT) TO mk_app;
++    END IF;
++END
++$$;
+diff --git a/database/migrations/008_user_delete_and_menu_enable.sql b/database/migrations/008_user_delete_and_menu_enable.sql
+new file mode 100644
+index 0000000..a9c62f1
+--- /dev/null
++++ b/database/migrations/008_user_delete_and_menu_enable.sql
+@@ -0,0 +1,210 @@
++-- =====================================================================
++-- 008: delete staff users, and enable / disable menu items
++--
++-- Users:  a deleted user is hidden, cannot sign in, and their username can be used again.
++--         The row is kept (soft delete) because orders, cash sessions, stock movements and the
++--         activity log all point at it, and the app is never allowed to DELETE rows.
++-- Menu:   a disabled food or food tray is hidden from the POS and cannot be sold or cooked.
++--         Its stock and history stay as they are. Only the owner can switch it (admin page).
++--
++-- Needs migration 007 (it adds servings_per_tray to the stock view). Safe to run more than once.
++--   psql -U postgres -h localhost -d mamitas_kitchen -v ON_ERROR_STOP=1 -1 \
++--        -f database/migrations/008_user_delete_and_menu_enable.sql
++-- =====================================================================
++
++-- ---------- Users: soft delete ----------
++ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
++
++-- A username is unique only among users that are not deleted, so the name can be reused
++DROP INDEX IF EXISTS users_username_unique;
++CREATE UNIQUE INDEX users_username_unique ON users (lower(username)) WHERE deleted_at IS NULL;
++
++-- ---------- Menu items: enabled / disabled ----------
++ALTER TABLE items ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
++
++-- Ingredients are never on the menu, so they cannot be disabled
++ALTER TABLE items DROP CONSTRAINT IF EXISTS items_enabled_menu_only;
++ALTER TABLE items ADD CONSTRAINT items_enabled_menu_only CHECK (item_type <> 'ingredient' OR is_enabled);
++
++-- The menu pages read it from this view (new columns can only be added at the end)
++CREATE OR REPLACE VIEW v_item_stock AS
++SELECT i.id AS item_id,
++       i.name,
++       i.item_type,
++       c.name AS category,
++       i.unit,
++       i.min_level,
++       i.price,
++       i.has_expiry,
++       COALESCE(SUM(b.qty_remaining), 0) AS qty_on_hand,
++       COALESCE(SUM(b.qty_remaining)
++                FILTER (WHERE b.expiry_date IS NULL OR b.expiry_date >= CURRENT_DATE), 0) AS qty_usable,
++       COUNT(b.id) FILTER (WHERE b.qty_remaining > 0) AS open_batches,
++       MIN(b.expiry_date) FILTER (WHERE b.qty_remaining > 0 AND b.expiry_date IS NOT NULL) AS next_expiry,
++       i.servings_per_tray,
++       i.is_enabled
++FROM items i
++JOIN categories c ON c.id = i.category_id
++LEFT JOIN inventory_batches b ON b.item_id = i.id
++WHERE i.is_active
++GROUP BY i.id, c.name;
++
++-- A disabled item cannot be sold, whatever path the order came through
++CREATE OR REPLACE FUNCTION fn_require_enabled_item() RETURNS trigger AS $$
++DECLARE
++    v_name    TEXT;
++    v_enabled BOOLEAN;
++BEGIN
++    SELECT name, is_enabled INTO v_name, v_enabled FROM items WHERE id = NEW.item_id;
++    IF FOUND AND NOT v_enabled THEN
++        RAISE EXCEPTION '"%" is disabled and cannot be sold', v_name USING ERRCODE = '23514';
++    END IF;
++    RETURN NEW;
++END;
++$$ LANGUAGE plpgsql;
++
++DROP TRIGGER IF EXISTS order_items_require_enabled ON order_items;
++CREATE TRIGGER order_items_require_enabled
++    BEFORE INSERT ON order_items
++    FOR EACH ROW EXECUTE FUNCTION fn_require_enabled_item();
++
++-- Adding trays of a disabled dish is refused too (same function as migration 007, plus that check)
++CREATE OR REPLACE FUNCTION fn_add_menu_trays(
++    p_item_id INTEGER,
++    p_trays   INTEGER,
++    p_user_id INTEGER,
++    p_reason  TEXT DEFAULT NULL
++) RETURNS JSONB AS $$
++DECLARE
++    v_item        items%ROWTYPE;
++    v_servings    INTEGER;
++    v_tray_word   TEXT;
++    v_plan        JSONB   := '[]'::jsonb;      -- ingredients to take: [{id, name, unit, qty}]
++    v_used        JSONB   := '[]'::jsonb;      -- what was really taken
++    v_short       TEXT[]  := ARRAY[]::TEXT[];  -- one message per shortage
++    v_tried       TEXT[];
++    v_picked      BOOLEAN;
++    v_have        NUMERIC;
++    v_batch_id    INTEGER;
++    v_batch_code  TEXT;
++    g             RECORD;
++    r             RECORD;
++BEGIN
++    IF p_trays IS NULL OR p_trays < 1 THEN
++        RAISE EXCEPTION 'Trays must be a whole number of at least 1';
++    END IF;
++
++    SELECT * INTO v_item FROM items WHERE id = p_item_id AND is_active;
++    IF NOT FOUND THEN
++        RAISE EXCEPTION 'Item not found';
++    END IF;
++    IF v_item.item_type <> 'food' THEN
++        RAISE EXCEPTION '"%" is not a dish sold per serving, so it is not added by the tray', v_item.name;
++    END IF;
++    IF NOT v_item.is_enabled THEN
++        RAISE EXCEPTION '"%" is disabled. Ask the owner to enable it before adding trays', v_item.name;
++    END IF;
++
++    v_servings  := p_trays * v_item.servings_per_tray;
++    v_tray_word := CASE WHEN p_trays = 1 THEN 'tray' ELSE 'trays' END;
++
++    -- Required lines with a single choice
++    FOR r IN
++        SELECT ri.ingredient_item_id AS id, i.name, i.unit, ri.qty_per_tray * p_trays AS need
++          FROM recipe_ingredients ri
++          JOIN items i ON i.id = ri.ingredient_item_id
++         WHERE ri.menu_item_id = p_item_id
++           AND NOT ri.is_optional
++           AND ri.alt_group IS NULL
++         ORDER BY ri.id
++    LOOP
++        v_have := fn_usable_qty(r.id);
++        IF v_have < r.need THEN
++            v_short := v_short || format('%s needs %s %s, only %s %s available',
++                                         r.name, fn_fmt_qty(r.need), r.unit, fn_fmt_qty(v_have), r.unit);
++        ELSE
++            v_plan := v_plan || jsonb_build_object('id', r.id, 'name', r.name, 'unit', r.unit, 'qty', r.need);
++        END IF;
++    END LOOP;
++
++    -- "This or that" groups: the first choice with enough stock wins
++    FOR g IN
++        SELECT DISTINCT alt_group
++          FROM recipe_ingredients
++         WHERE menu_item_id = p_item_id
++           AND NOT is_optional
++           AND alt_group IS NOT NULL
++         ORDER BY alt_group
++    LOOP
++        v_picked := FALSE;
++        v_tried  := ARRAY[]::TEXT[];
++        FOR r IN
++            SELECT ri.ingredient_item_id AS id, i.name, i.unit, ri.qty_per_tray * p_trays AS need
++              FROM recipe_ingredients ri
++              JOIN items i ON i.id = ri.ingredient_item_id
++             WHERE ri.menu_item_id = p_item_id
++               AND NOT ri.is_optional
++               AND ri.alt_group = g.alt_group
++             ORDER BY ri.alt_rank
++        LOOP
++            v_have := fn_usable_qty(r.id);
++            IF v_have >= r.need THEN
++                v_plan   := v_plan || jsonb_build_object('id', r.id, 'name', r.name, 'unit', r.unit, 'qty', r.need);
++                v_picked := TRUE;
++                EXIT;
++            END IF;
++            v_tried := v_tried || format('%s needs %s %s, only %s %s available',
++                                         r.name, fn_fmt_qty(r.need), r.unit, fn_fmt_qty(v_have), r.unit);
++        END LOOP;
++        IF NOT v_picked THEN
++            v_short := v_short || ('none of these has enough: ' || array_to_string(v_tried, ' / '));
++        END IF;
++    END LOOP;
++
++    IF cardinality(v_short) > 0 THEN
++        RAISE EXCEPTION 'Not enough ingredients for % % of %: %',
++            p_trays, v_tray_word, v_item.name, array_to_string(v_short, '; ');
++    END IF;
++
++    -- Take the ingredients, oldest batch first. Always in the same order (by item id), so two
++    -- cooks at the same moment lock the same batches in the same order and cannot deadlock.
++    FOR r IN
++        SELECT (e->>'id')::INTEGER AS id, e->>'name' AS name, e->>'unit' AS unit, (e->>'qty')::NUMERIC AS qty
++          FROM jsonb_array_elements(v_plan) AS e
++         ORDER BY 1
++    LOOP
++        PERFORM fn_consume_stock(
++            r.id, r.qty, NULL, p_user_id,
++            format('Cooked %s %s of %s', p_trays, v_tray_word, v_item.name));
++        v_used := v_used || jsonb_build_object('name', r.name, 'unit', r.unit, 'qty', r.qty);
++    END LOOP;
++
++    -- The servings, available until the end of today (the batch rules set the expiry date)
++    INSERT INTO inventory_batches (item_id, qty_received, qty_remaining, created_by)
++    VALUES (p_item_id, v_servings, v_servings, p_user_id)
++    RETURNING id, batch_code INTO v_batch_id, v_batch_code;
++
++    INSERT INTO stock_movements (item_id, batch_id, movement_type, qty, reason, user_id)
++    VALUES (p_item_id, v_batch_id, 'IN', v_servings,
++            COALESCE(p_reason, format('%s %s cooked (%s servings)', p_trays, v_tray_word, v_servings)),
++            p_user_id);
++
++    RETURN jsonb_build_object(
++        'batchId',         v_batch_id,
++        'batchCode',       v_batch_code,
++        'trays',           p_trays,
++        'servings',        v_servings,
++        'servingsPerTray', v_item.servings_per_tray,
++        'hasRecipe',       jsonb_array_length(v_plan) > 0,
++        'used',            v_used
++    );
++END;
++$$ LANGUAGE plpgsql;
++
++DO $$
++BEGIN
++    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mk_app') THEN
++        GRANT EXECUTE ON FUNCTION fn_add_menu_trays(INTEGER, INTEGER, INTEGER, TEXT) TO mk_app;
++    END IF;
++END
++$$;
+diff --git a/database/run_all.sql b/database/run_all.sql
+index eb041f3..36556c3 100644
+--- a/database/run_all.sql
++++ b/database/run_all.sql
+@@ -13,4 +13,8 @@ BEGIN;
+ \ir migrations/002_allow_adjustment_quantities.sql
+ \ir migrations/003_menu_daily_servings.sql
+ \ir migrations/004_cashier_sessions.sql
++\ir migrations/005_shop_settings.sql
++\ir migrations/006_user_security_and_temp_passwords.sql
++\ir migrations/007_recipe_deduction.sql
++\ir migrations/008_user_delete_and_menu_enable.sql
+ COMMIT;
+\ No newline at end of file
+diff --git a/database/seeds/03_real_menu_and_ingredients.sql b/database/seeds/03_real_menu_and_ingredients.sql
+index c054768..14d6c6d 100644
+--- a/database/seeds/03_real_menu_and_ingredients.sql
++++ b/database/seeds/03_real_menu_and_ingredients.sql
+@@ -4,7 +4,10 @@
+ \set ON_ERROR_STOP on
+ BEGIN;
+ 
+-TRUNCATE stock_movements, payments, order_items, orders, inventory_batches, items, categories
++-- (recipe_ingredients comes from migration 007; it points at items, so it is emptied too.
++--  Load database/seeds/06_recipes.sql again afterwards to bring the recipes back.)
++TRUNCATE stock_movements, payments, order_items, orders, inventory_batches, recipe_ingredients,
++         items, categories
+     RESTART IDENTITY;
+ ALTER SEQUENCE batch_code_seq RESTART WITH 1;
+ UPDATE counters SET last_value = 0 WHERE name = 'order_number';
+diff --git a/database/seeds/06_recipes.sql b/database/seeds/06_recipes.sql
+new file mode 100644
+index 0000000..e351d72
+--- /dev/null
++++ b/database/seeds/06_recipes.sql
+@@ -0,0 +1,496 @@
++-- Mamitas Kitchen: recipes (what ONE TRAY of each dish uses).
++-- Generated from "Mamita's Kitchen Singapore - Standard Dish Ingredients & Inventory Units" (PDF):
++-- 37 dishes, 364 recipe lines. Standard yield: 1 tray = 10 servings.
++--
++-- How the app uses a recipe when trays of a dish are added to the menu (migration 007):
++--   * a normal line        -> qty_per_tray x trays is taken from inventory, oldest batch first (FIFO)
++--   * an "or" line         -> lines with the same alt_group are choices (alt_rank 1 is tried first).
++--                             The first choice that has enough stock is used. (21 such groups)
++--   * an optional line     -> listed here, but NOT taken from inventory (18 such lines)
++--
++-- Needs migration 007 and the real items from 03_real_menu_and_ingredients.sql.
++-- Safe to run again: the recipes of every dish listed here are replaced. Nothing is saved if a
++-- dish or ingredient name is wrong, or a unit does not match the one in the system.
++--   psql -U postgres -h localhost -d mamitas_kitchen -f database/seeds/06_recipes.sql
++\set ON_ERROR_STOP on
++BEGIN;
++
++CREATE TEMP TABLE recipe_src (
++    dish         TEXT          NOT NULL,
++    ingredient   TEXT          NOT NULL,
++    qty_per_tray NUMERIC(12,3) NOT NULL,
++    unit         TEXT          NOT NULL,   -- must equal the ingredient's unit in the system
++    alt_group    SMALLINT,
++    alt_rank     SMALLINT,
++    is_optional  BOOLEAN       NOT NULL
++) ON COMMIT DROP;
++
++INSERT INTO recipe_src (dish, ingredient, qty_per_tray, unit, alt_group, alt_rank, is_optional) VALUES
++  -- Kare-Kare (Pork Pata)
++  ('Kare-Kare (Pork Pata)', 'Pork Pata', 1.5, 'kg', NULL, NULL, FALSE),
++  ('Kare-Kare (Pork Pata)', 'Eggplant', 0.3, 'kg', NULL, NULL, FALSE),
++  ('Kare-Kare (Pork Pata)', 'Sitaw (String Beans)', 2, 'bunch', NULL, NULL, FALSE),
++  ('Kare-Kare (Pork Pata)', 'Pechay', 1, 'bunch', NULL, NULL, FALSE),
++  ('Kare-Kare (Pork Pata)', 'Banana Blossom', 1, 'pcs', NULL, NULL, FALSE),
++  ('Kare-Kare (Pork Pata)', 'Peanut Butter', 0.25, 'kg', NULL, NULL, FALSE),
++  ('Kare-Kare (Pork Pata)', 'Bagoong Alamang', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Kare-Kare (Pork Pata)', 'Annatto (Atsuete)', 0.015, 'kg', NULL, NULL, FALSE),
++  ('Kare-Kare (Pork Pata)', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Kare-Kare (Pork Pata)', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Kare-Kare (Pork Pata)', 'Salt', 0.01, 'kg', NULL, NULL, FALSE),
++  -- Kaldereta Spareribs
++  ('Kaldereta Spareribs', 'Pork Spareribs', 1.5, 'kg', NULL, NULL, FALSE),
++  ('Kaldereta Spareribs', 'Potatoes', 0.3, 'kg', NULL, NULL, FALSE),
++  ('Kaldereta Spareribs', 'Carrots', 0.2, 'kg', NULL, NULL, FALSE),
++  ('Kaldereta Spareribs', 'Bell Pepper', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Kaldereta Spareribs', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Kaldereta Spareribs', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Kaldereta Spareribs', 'Tomato Sauce', 0.25, 'L', NULL, NULL, FALSE),
++  ('Kaldereta Spareribs', 'Liver Spread', 0.085, 'kg', NULL, NULL, FALSE),
++  ('Kaldereta Spareribs', 'Soy Sauce', 0.06, 'L', NULL, NULL, FALSE),
++  ('Kaldereta Spareribs', 'Bay Leaves', 0.05, 'pack', NULL, NULL, FALSE),
++  ('Kaldereta Spareribs', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Kaldereta Spareribs', 'Chili Peppers', 0.015, 'kg', NULL, NULL, TRUE),
++  -- Binagoongan
++  ('Binagoongan', 'Pork Belly', 1.5, 'kg', NULL, NULL, FALSE),
++  ('Binagoongan', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Binagoongan', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Binagoongan', 'Tomato', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Binagoongan', 'Chili Peppers', 0.02, 'kg', NULL, NULL, TRUE),
++  ('Binagoongan', 'Bagoong Alamang', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Binagoongan', 'Vinegar', 0.045, 'L', NULL, NULL, FALSE),
++  ('Binagoongan', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Binagoongan', 'Cooking Oil', 0.045, 'L', NULL, NULL, FALSE),
++  -- Sarsiado Bangus
++  ('Sarsiado Bangus', 'Bangus', 1.2, 'kg', NULL, NULL, FALSE),
++  ('Sarsiado Bangus', 'Tomato', 0.3, 'kg', NULL, NULL, FALSE),
++  ('Sarsiado Bangus', 'Onion', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Sarsiado Bangus', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Sarsiado Bangus', 'Eggs', 3, 'pcs', NULL, NULL, FALSE),
++  ('Sarsiado Bangus', 'Spring Onion', 0.5, 'bunch', NULL, NULL, FALSE),
++  ('Sarsiado Bangus', 'Fish Sauce', 0.03, 'L', NULL, NULL, FALSE),
++  ('Sarsiado Bangus', 'Salt', 0.01, 'kg', NULL, NULL, FALSE),
++  ('Sarsiado Bangus', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Sarsiado Bangus', 'Cooking Oil', 0.1, 'L', NULL, NULL, FALSE),
++  -- Giniling na Baboy
++  ('Giniling na Baboy', 'Ground Pork', 1.2, 'kg', NULL, NULL, FALSE),
++  ('Giniling na Baboy', 'Potatoes', 0.25, 'kg', NULL, NULL, FALSE),
++  ('Giniling na Baboy', 'Carrots', 0.2, 'kg', NULL, NULL, FALSE),
++  ('Giniling na Baboy', 'Bell Pepper', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Giniling na Baboy', 'Green Peas', 0.1, 'kg', NULL, NULL, TRUE),
++  ('Giniling na Baboy', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Giniling na Baboy', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Giniling na Baboy', 'Tomato', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Giniling na Baboy', 'Tomato Sauce', 0.25, 'L', NULL, NULL, FALSE),
++  ('Giniling na Baboy', 'Soy Sauce', 0.045, 'L', NULL, NULL, FALSE),
++  ('Giniling na Baboy', 'Fish Sauce', 0.03, 'L', NULL, NULL, FALSE),
++  ('Giniling na Baboy', 'Salt', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Giniling na Baboy', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  -- Sisig Bagnet
++  ('Sisig Bagnet', 'Bagnet (Crispy Pork Belly)', 1.2, 'kg', NULL, NULL, FALSE),
++  ('Sisig Bagnet', 'Onion', 0.25, 'kg', NULL, NULL, FALSE),
++  ('Sisig Bagnet', 'Chili Peppers', 0.025, 'kg', NULL, NULL, FALSE),
++  ('Sisig Bagnet', 'Calamansi', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Sisig Bagnet', 'Soy Sauce', 0.045, 'L', NULL, NULL, FALSE),
++  ('Sisig Bagnet', 'Calamansi Juice', 0.045, 'L', NULL, NULL, FALSE),
++  ('Sisig Bagnet', 'Mayonnaise', 0.1, 'kg', NULL, NULL, TRUE),
++  ('Sisig Bagnet', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  -- Pakbet
++  ('Pakbet', 'Pork Belly', 0.5, 'kg', NULL, NULL, FALSE),
++  ('Pakbet', 'Ampalaya', 0.25, 'kg', NULL, NULL, FALSE),
++  ('Pakbet', 'Eggplant', 0.25, 'kg', NULL, NULL, FALSE),
++  ('Pakbet', 'Okra', 0.2, 'kg', NULL, NULL, FALSE),
++  ('Pakbet', 'Sitaw (String Beans)', 2, 'bunch', NULL, NULL, FALSE),
++  ('Pakbet', 'Kalabasa (Squash)', 0.3, 'kg', NULL, NULL, FALSE),
++  ('Pakbet', 'Tomato', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Pakbet', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Pakbet', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Pakbet', 'Bagoong Isda', 0.06, 'kg', 1, 1, FALSE),
++  ('Pakbet', 'Bagoong Alamang', 0.08, 'kg', 1, 2, FALSE),
++  ('Pakbet', 'Salt', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Pakbet', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  -- Chop Suey
++  ('Chop Suey', 'Cabbage', 0.3, 'kg', NULL, NULL, FALSE),
++  ('Chop Suey', 'Carrots', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Chop Suey', 'Cauliflower', 0.2, 'kg', NULL, NULL, FALSE),
++  ('Chop Suey', 'Broccoli', 0.2, 'kg', NULL, NULL, FALSE),
++  ('Chop Suey', 'Bell Pepper', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Chop Suey', 'Sayote', 0.2, 'kg', NULL, NULL, FALSE),
++  ('Chop Suey', 'Pork', 0.5, 'kg', 1, 1, FALSE),
++  ('Chop Suey', 'Chicken', 0.5, 'kg', 1, 2, FALSE),
++  ('Chop Suey', 'Shrimp', 0.25, 'kg', NULL, NULL, TRUE),
++  ('Chop Suey', 'Oyster Sauce', 0.06, 'L', NULL, NULL, FALSE),
++  ('Chop Suey', 'Soy Sauce', 0.03, 'L', NULL, NULL, FALSE),
++  ('Chop Suey', 'Garlic', 0.03, 'kg', NULL, NULL, FALSE),
++  ('Chop Suey', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Chop Suey', 'Cornstarch', 0.015, 'kg', NULL, NULL, FALSE),
++  ('Chop Suey', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  -- Monggo
++  ('Monggo', 'Mung Beans', 0.4, 'kg', NULL, NULL, FALSE),
++  ('Monggo', 'Pork', 0.5, 'kg', NULL, NULL, FALSE),
++  ('Monggo', 'Malunggay', 1, 'bunch', 1, 1, FALSE),
++  ('Monggo', 'Spinach', 1, 'bunch', 1, 2, FALSE),
++  ('Monggo', 'Tomato', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Monggo', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Monggo', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Monggo', 'Fish Sauce', 0.045, 'L', NULL, NULL, FALSE),
++  ('Monggo', 'Salt', 0.01, 'kg', NULL, NULL, FALSE),
++  ('Monggo', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  -- Lechon Kawali
++  ('Lechon Kawali', 'Pork Belly', 1.5, 'kg', NULL, NULL, FALSE),
++  ('Lechon Kawali', 'Garlic', 0.05, 'kg', NULL, NULL, FALSE),
++  ('Lechon Kawali', 'Bay Leaves', 0.05, 'pack', NULL, NULL, FALSE),
++  ('Lechon Kawali', 'Salt', 0.02, 'kg', NULL, NULL, FALSE),
++  ('Lechon Kawali', 'Black Pepper', 0.01, 'kg', NULL, NULL, FALSE),
++  ('Lechon Kawali', 'Vinegar', 0.15, 'L', 1, 1, FALSE),
++  ('Lechon Kawali', 'Liver Spread', 0.15, 'kg', 1, 2, FALSE),
++  -- Bicol Express
++  ('Bicol Express', 'Pork Belly', 1.5, 'kg', NULL, NULL, FALSE),
++  ('Bicol Express', 'Coconut Milk', 0.5, 'L', NULL, NULL, FALSE),
++  ('Bicol Express', 'Chili Peppers', 0.05, 'kg', NULL, NULL, FALSE),
++  ('Bicol Express', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Bicol Express', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Bicol Express', 'Bagoong Alamang', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Bicol Express', 'Fish Sauce', 0.03, 'L', NULL, NULL, FALSE),
++  ('Bicol Express', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  -- Bopis
++  ('Bopis', 'Pork Lungs', 0.8, 'kg', NULL, NULL, FALSE),
++  ('Bopis', 'Pork Heart', 0.4, 'kg', NULL, NULL, FALSE),
++  ('Bopis', 'Carrots', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Bopis', 'Bell Pepper', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Bopis', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Bopis', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Bopis', 'Chili Peppers', 0.02, 'kg', NULL, NULL, FALSE),
++  ('Bopis', 'Vinegar', 0.06, 'L', NULL, NULL, FALSE),
++  ('Bopis', 'Fish Sauce', 0.045, 'L', NULL, NULL, FALSE),
++  ('Bopis', 'Bay Leaves', 0.05, 'pack', NULL, NULL, FALSE),
++  ('Bopis', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  -- Beef Mushroom
++  ('Beef Mushroom', 'Beef', 1.2, 'kg', NULL, NULL, FALSE),
++  ('Beef Mushroom', 'Mushrooms', 0.3, 'kg', NULL, NULL, FALSE),
++  ('Beef Mushroom', 'Onion', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Beef Mushroom', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Beef Mushroom', 'Soy Sauce', 0.06, 'L', NULL, NULL, FALSE),
++  ('Beef Mushroom', 'Oyster Sauce', 0.06, 'L', NULL, NULL, FALSE),
++  ('Beef Mushroom', 'Beef Broth', 0.25, 'L', NULL, NULL, FALSE),
++  ('Beef Mushroom', 'Cornstarch', 0.015, 'kg', NULL, NULL, FALSE),
++  ('Beef Mushroom', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  -- Menudo
++  ('Menudo', 'Pork', 1, 'kg', NULL, NULL, FALSE),
++  ('Menudo', 'Pork Liver', 0.25, 'kg', NULL, NULL, FALSE),
++  ('Menudo', 'Potatoes', 0.25, 'kg', NULL, NULL, FALSE),
++  ('Menudo', 'Carrots', 0.2, 'kg', NULL, NULL, FALSE),
++  ('Menudo', 'Bell Pepper', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Menudo', 'Tomato', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Menudo', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Menudo', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Menudo', 'Tomato Sauce', 0.25, 'L', NULL, NULL, FALSE),
++  ('Menudo', 'Soy Sauce', 0.06, 'L', NULL, NULL, FALSE),
++  ('Menudo', 'Bay Leaves', 0.05, 'pack', NULL, NULL, FALSE),
++  ('Menudo', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  -- Sinigang na Baboy
++  ('Sinigang na Baboy', 'Pork Belly', 1.5, 'kg', NULL, NULL, FALSE),
++  ('Sinigang na Baboy', 'Tomato', 0.2, 'kg', NULL, NULL, FALSE),
++  ('Sinigang na Baboy', 'Onion', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Sinigang na Baboy', 'Radish', 0.2, 'kg', NULL, NULL, FALSE),
++  ('Sinigang na Baboy', 'Kangkong', 1, 'bunch', NULL, NULL, FALSE),
++  ('Sinigang na Baboy', 'Sitaw (String Beans)', 1, 'bunch', NULL, NULL, FALSE),
++  ('Sinigang na Baboy', 'Eggplant', 0.2, 'kg', NULL, NULL, FALSE),
++  ('Sinigang na Baboy', 'Gabi (Taro)', 0.15, 'kg', NULL, NULL, TRUE),
++  ('Sinigang na Baboy', 'Tamarind', 0.044, 'kg', 1, 1, FALSE),
++  ('Sinigang na Baboy', 'Sinigang Mix', 2, 'pack', 1, 2, FALSE),
++  ('Sinigang na Baboy', 'Fish Sauce', 0.06, 'L', NULL, NULL, FALSE),
++  ('Sinigang na Baboy', 'Salt', 0.01, 'kg', NULL, NULL, FALSE),
++  -- Ginataang Sitaw at Kalabasa
++  ('Ginataang Sitaw at Kalabasa', 'Sitaw (String Beans)', 3, 'bunch', NULL, NULL, FALSE),
++  ('Ginataang Sitaw at Kalabasa', 'Kalabasa (Squash)', 0.5, 'kg', NULL, NULL, FALSE),
++  ('Ginataang Sitaw at Kalabasa', 'Pork', 0.4, 'kg', 1, 1, FALSE),
++  ('Ginataang Sitaw at Kalabasa', 'Shrimp', 0.4, 'kg', 1, 2, TRUE),
++  ('Ginataang Sitaw at Kalabasa', 'Garlic', 0.03, 'kg', NULL, NULL, FALSE),
++  ('Ginataang Sitaw at Kalabasa', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Ginataang Sitaw at Kalabasa', 'Coconut Milk', 0.4, 'L', NULL, NULL, FALSE),
++  ('Ginataang Sitaw at Kalabasa', 'Fish Sauce', 0.03, 'L', NULL, NULL, FALSE),
++  ('Ginataang Sitaw at Kalabasa', 'Salt', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Ginataang Sitaw at Kalabasa', 'Chili Peppers', 0.015, 'kg', NULL, NULL, TRUE),
++  -- Paksiw na Pata
++  ('Paksiw na Pata', 'Pork Pata', 1.5, 'kg', NULL, NULL, FALSE),
++  ('Paksiw na Pata', 'Garlic', 0.05, 'kg', NULL, NULL, FALSE),
++  ('Paksiw na Pata', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Paksiw na Pata', 'Bay Leaves', 0.05, 'pack', NULL, NULL, FALSE),
++  ('Paksiw na Pata', 'Vinegar', 0.12, 'L', NULL, NULL, FALSE),
++  ('Paksiw na Pata', 'Soy Sauce', 0.09, 'L', NULL, NULL, FALSE),
++  ('Paksiw na Pata', 'Brown Sugar', 0.06, 'kg', NULL, NULL, FALSE),
++  ('Paksiw na Pata', 'Whole Peppercorn', 0.005, 'kg', NULL, NULL, FALSE),
++  -- Pork Mechado
++  ('Pork Mechado', 'Beef', 1.3, 'kg', 1, 1, FALSE),
++  ('Pork Mechado', 'Pork', 1.3, 'kg', 1, 2, FALSE),
++  ('Pork Mechado', 'Potatoes', 0.3, 'kg', NULL, NULL, FALSE),
++  ('Pork Mechado', 'Carrots', 0.2, 'kg', NULL, NULL, FALSE),
++  ('Pork Mechado', 'Bell Pepper', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Pork Mechado', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Pork Mechado', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Pork Mechado', 'Tomato Sauce', 0.25, 'L', NULL, NULL, FALSE),
++  ('Pork Mechado', 'Soy Sauce', 0.06, 'L', NULL, NULL, FALSE),
++  ('Pork Mechado', 'Calamansi Juice', 0.03, 'L', NULL, NULL, FALSE),
++  ('Pork Mechado', 'Bay Leaves', 0.05, 'pack', NULL, NULL, FALSE),
++  ('Pork Mechado', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  -- Bistek Tagalog
++  ('Bistek Tagalog', 'Beef Slices', 1.2, 'kg', NULL, NULL, FALSE),
++  ('Bistek Tagalog', 'Onion', 0.25, 'kg', NULL, NULL, FALSE),
++  ('Bistek Tagalog', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Bistek Tagalog', 'Soy Sauce', 0.09, 'L', NULL, NULL, FALSE),
++  ('Bistek Tagalog', 'Calamansi Juice', 0.06, 'L', NULL, NULL, FALSE),
++  ('Bistek Tagalog', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  -- Paksiw na Bangus
++  ('Paksiw na Bangus', 'Bangus', 1.2, 'kg', NULL, NULL, FALSE),
++  ('Paksiw na Bangus', 'Ginger', 0.05, 'kg', NULL, NULL, FALSE),
++  ('Paksiw na Bangus', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Paksiw na Bangus', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Paksiw na Bangus', 'Eggplant', 0.2, 'kg', NULL, NULL, FALSE),
++  ('Paksiw na Bangus', 'Okra', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Paksiw na Bangus', 'Long Green Chili', 0.03, 'kg', NULL, NULL, FALSE),
++  ('Paksiw na Bangus', 'Vinegar', 0.15, 'L', NULL, NULL, FALSE),
++  ('Paksiw na Bangus', 'Whole Peppercorn', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Paksiw na Bangus', 'Salt', 0.01, 'kg', 1, 1, FALSE),
++  ('Paksiw na Bangus', 'Fish Sauce', 0.03, 'L', 1, 2, FALSE),
++  -- Beef Broccoli
++  ('Beef Broccoli', 'Beef Slices', 1.2, 'kg', NULL, NULL, FALSE),
++  ('Beef Broccoli', 'Broccoli', 0.5, 'kg', NULL, NULL, FALSE),
++  ('Beef Broccoli', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Beef Broccoli', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Beef Broccoli', 'Oyster Sauce', 0.075, 'L', NULL, NULL, FALSE),
++  ('Beef Broccoli', 'Soy Sauce', 0.045, 'L', NULL, NULL, FALSE),
++  ('Beef Broccoli', 'Cornstarch', 0.015, 'kg', NULL, NULL, FALSE),
++  ('Beef Broccoli', 'Sesame Oil', 0.01, 'L', NULL, NULL, TRUE),
++  ('Beef Broccoli', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  -- Chicken Afritada
++  ('Chicken Afritada', 'Chicken', 1.5, 'kg', NULL, NULL, FALSE),
++  ('Chicken Afritada', 'Potatoes', 0.3, 'kg', NULL, NULL, FALSE),
++  ('Chicken Afritada', 'Carrots', 0.2, 'kg', NULL, NULL, FALSE),
++  ('Chicken Afritada', 'Bell Pepper', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Chicken Afritada', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Chicken Afritada', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Chicken Afritada', 'Tomato Sauce', 0.25, 'L', NULL, NULL, FALSE),
++  ('Chicken Afritada', 'Fish Sauce', 0.03, 'L', 1, 1, FALSE),
++  ('Chicken Afritada', 'Soy Sauce', 0.045, 'L', 1, 2, FALSE),
++  ('Chicken Afritada', 'Bay Leaves', 0.05, 'pack', NULL, NULL, FALSE),
++  ('Chicken Afritada', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  -- Classic Dinuguan
++  ('Classic Dinuguan', 'Pork Belly', 1, 'kg', NULL, NULL, FALSE),
++  ('Classic Dinuguan', 'Pork Intestines', 0.3, 'kg', NULL, NULL, FALSE),
++  ('Classic Dinuguan', 'Pork Blood', 0.5, 'kg', NULL, NULL, FALSE),
++  ('Classic Dinuguan', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Classic Dinuguan', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Classic Dinuguan', 'Vinegar', 0.12, 'L', NULL, NULL, FALSE),
++  ('Classic Dinuguan', 'Fish Sauce', 0.045, 'L', NULL, NULL, FALSE),
++  ('Classic Dinuguan', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Classic Dinuguan', 'Long Green Chili', 0.025, 'kg', NULL, NULL, TRUE),
++  -- Pork Shanghai
++  ('Pork Shanghai', 'Ground Pork', 0.8, 'kg', NULL, NULL, FALSE),
++  ('Pork Shanghai', 'Carrots', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Pork Shanghai', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Pork Shanghai', 'Garlic', 0.03, 'kg', NULL, NULL, FALSE),
++  ('Pork Shanghai', 'Spring Onion', 0.5, 'bunch', NULL, NULL, FALSE),
++  ('Pork Shanghai', 'Eggs', 1, 'pcs', NULL, NULL, FALSE),
++  ('Pork Shanghai', 'Lumpia Wrappers', 0.5, 'pack', NULL, NULL, FALSE),
++  ('Pork Shanghai', 'Soy Sauce', 0.03, 'L', NULL, NULL, FALSE),
++  ('Pork Shanghai', 'Salt', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Pork Shanghai', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Pork Shanghai', 'Sweet Chili Sauce', 0.15, 'L', 1, 1, FALSE),
++  ('Pork Shanghai', 'Banana Ketchup', 0.15, 'L', 1, 2, FALSE),
++  -- Vegetable Spring Roll
++  ('Vegetable Spring Roll', 'Cabbage', 0.3, 'kg', NULL, NULL, FALSE),
++  ('Vegetable Spring Roll', 'Carrots', 0.2, 'kg', NULL, NULL, FALSE),
++  ('Vegetable Spring Roll', 'Bean Sprouts', 0.25, 'kg', NULL, NULL, FALSE),
++  ('Vegetable Spring Roll', 'Green Beans', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Vegetable Spring Roll', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Vegetable Spring Roll', 'Garlic', 0.03, 'kg', NULL, NULL, FALSE),
++  ('Vegetable Spring Roll', 'Lumpia Wrappers', 0.35, 'pack', NULL, NULL, FALSE),
++  ('Vegetable Spring Roll', 'Soy Sauce', 0.03, 'L', NULL, NULL, FALSE),
++  ('Vegetable Spring Roll', 'Salt', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Vegetable Spring Roll', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Vegetable Spring Roll', 'Sweet Chili Sauce', 0.15, 'L', NULL, NULL, FALSE),
++  -- Vegetable Okoy
++  ('Vegetable Okoy', 'Bean Sprouts', 0.3, 'kg', NULL, NULL, FALSE),
++  ('Vegetable Okoy', 'Kalabasa (Squash)', 0.25, 'kg', 1, 1, FALSE),
++  ('Vegetable Okoy', 'Sweet Potato', 0.25, 'kg', 1, 2, FALSE),
++  ('Vegetable Okoy', 'Carrots', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Vegetable Okoy', 'Spring Onion', 0.5, 'bunch', NULL, NULL, FALSE),
++  ('Vegetable Okoy', 'All-Purpose Flour', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Vegetable Okoy', 'Cornstarch', 0.05, 'kg', NULL, NULL, FALSE),
++  ('Vegetable Okoy', 'Salt', 0.01, 'kg', NULL, NULL, FALSE),
++  ('Vegetable Okoy', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Vegetable Okoy', 'Vinegar', 0.15, 'L', NULL, NULL, FALSE),
++  -- Torta Talong
++  ('Torta Talong', 'Eggplant', 1, 'kg', NULL, NULL, FALSE),
++  ('Torta Talong', 'Eggs', 6, 'pcs', NULL, NULL, FALSE),
++  ('Torta Talong', 'Cooking Oil', 0.15, 'L', NULL, NULL, FALSE),
++  ('Torta Talong', 'Salt', 0.01, 'kg', NULL, NULL, FALSE),
++  ('Torta Talong', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Torta Talong', 'Banana Ketchup', 0.1, 'L', NULL, NULL, TRUE),
++  -- Kwek-Kwek
++  ('Kwek-Kwek', 'Quail Eggs', 30, 'pcs', NULL, NULL, FALSE),
++  ('Kwek-Kwek', 'All-Purpose Flour', 0.2, 'kg', NULL, NULL, FALSE),
++  ('Kwek-Kwek', 'Cornstarch', 0.05, 'kg', NULL, NULL, FALSE),
++  ('Kwek-Kwek', 'Annatto (Atsuete)', 0.01, 'kg', NULL, NULL, FALSE),
++  ('Kwek-Kwek', 'Salt', 0.01, 'kg', NULL, NULL, FALSE),
++  ('Kwek-Kwek', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Kwek-Kwek', 'Vinegar', 0.2, 'L', 1, 1, FALSE),
++  ('Kwek-Kwek', 'Sweet Chili Sauce', 0.2, 'L', 1, 2, FALSE),
++  -- Embutido
++  ('Embutido', 'Ground Pork', 1, 'kg', NULL, NULL, FALSE),
++  ('Embutido', 'Carrots', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Embutido', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Embutido', 'Garlic', 0.03, 'kg', NULL, NULL, FALSE),
++  ('Embutido', 'Eggs', 3, 'pcs', NULL, NULL, FALSE),
++  ('Embutido', 'Raisins', 0.05, 'kg', NULL, NULL, FALSE),
++  ('Embutido', 'Pickle Relish', 0.06, 'jar', NULL, NULL, FALSE),
++  ('Embutido', 'Hotdog', 0.2, 'pack', NULL, NULL, FALSE),
++  ('Embutido', 'Cheese', 0.1, 'kg', NULL, NULL, TRUE),
++  ('Embutido', 'Soy Sauce', 0.03, 'L', NULL, NULL, FALSE),
++  ('Embutido', 'Salt', 0.01, 'kg', NULL, NULL, FALSE),
++  ('Embutido', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  -- Chicharon Bulaklak
++  ('Chicharon Bulaklak', 'Pork Intestines', 1.5, 'kg', NULL, NULL, FALSE),
++  ('Chicharon Bulaklak', 'Salt', 0.02, 'kg', NULL, NULL, FALSE),
++  ('Chicharon Bulaklak', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Chicharon Bulaklak', 'Bay Leaves', 0.05, 'pack', NULL, NULL, FALSE),
++  ('Chicharon Bulaklak', 'Black Pepper', 0.01, 'kg', NULL, NULL, FALSE),
++  ('Chicharon Bulaklak', 'Vinegar', 0.15, 'L', NULL, NULL, FALSE),
++  -- Beef Mami
++  ('Beef Mami', 'Beef Brisket', 1, 'kg', 1, 1, FALSE),
++  ('Beef Mami', 'Beef Shank (with Marrow)', 1, 'kg', 1, 2, FALSE),
++  ('Beef Mami', 'Egg Noodles', 1, 'kg', NULL, NULL, FALSE),
++  ('Beef Mami', 'Beef Broth', 2.5, 'L', NULL, NULL, FALSE),
++  ('Beef Mami', 'Cabbage', 0.25, 'kg', NULL, NULL, FALSE),
++  ('Beef Mami', 'Carrots', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Beef Mami', 'Garlic', 0.04, 'kg', NULL, NULL, FALSE),
++  ('Beef Mami', 'Onion', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Beef Mami', 'Spring Onion', 0.5, 'bunch', NULL, NULL, FALSE),
++  ('Beef Mami', 'Eggs', 5, 'pcs', NULL, NULL, TRUE),
++  ('Beef Mami', 'Star Anise', 0.05, 'pack', NULL, NULL, FALSE),
++  ('Beef Mami', 'Beef Seasoning Cube', 0.2, 'pack', NULL, NULL, FALSE),
++  ('Beef Mami', 'Salt', 0.01, 'kg', NULL, NULL, FALSE),
++  ('Beef Mami', 'Black Pepper', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Beef Mami', 'Soy Sauce', 0.045, 'L', 2, 1, FALSE),
++  ('Beef Mami', 'Fish Sauce', 0.045, 'L', 2, 2, FALSE),
++  -- Special Bulalo
++  ('Special Bulalo', 'Beef Shank (with Marrow)', 2, 'kg', NULL, NULL, FALSE),
++  ('Special Bulalo', 'Cabbage', 0.3, 'kg', 1, 1, FALSE),
++  ('Special Bulalo', 'Pechay', 1, 'bunch', 1, 2, FALSE),
++  ('Special Bulalo', 'Corn', 3, 'pcs', NULL, NULL, FALSE),
++  ('Special Bulalo', 'Onion', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Special Bulalo', 'Whole Peppercorn', 0.01, 'kg', NULL, NULL, FALSE),
++  ('Special Bulalo', 'Fish Sauce', 0.06, 'L', NULL, NULL, FALSE),
++  ('Special Bulalo', 'Salt', 0.015, 'kg', NULL, NULL, FALSE),
++  ('Special Bulalo', 'Calamansi', 0.1, 'kg', NULL, NULL, FALSE),
++  ('Special Bulalo', 'Chili Peppers', 0.015, 'kg', NULL, NULL, FALSE),
++  -- Ube Bar
++  ('Ube Bar', 'Ube Halaya', 0.4, 'kg', 1, 1, FALSE),
++  ('Ube Bar', 'Ube (Purple Yam)', 0.4, 'kg', 1, 2, FALSE),
++  ('Ube Bar', 'All-Purpose Flour', 0.25, 'kg', NULL, NULL, FALSE),
++  ('Ube Bar', 'Eggs', 3, 'pcs', NULL, NULL, FALSE),
++  ('Ube Bar', 'Butter', 0.12, 'kg', 2, 1, FALSE),
++  ('Ube Bar', 'Cooking Oil', 0.12, 'L', 2, 2, FALSE),
++  ('Ube Bar', 'White Sugar', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Ube Bar', 'Milk', 0.12, 'L', NULL, NULL, FALSE),
++  ('Ube Bar', 'Vanilla Extract', 0.005, 'bottle', NULL, NULL, FALSE),
++  ('Ube Bar', 'Condensed Milk', 0.06, 'can', 3, 1, FALSE),
++  ('Ube Bar', 'Ube Flavoring', 0.005, 'bottle', 3, 2, FALSE),
++  -- Fruit Salad
++  ('Fruit Salad', 'Canned Fruit Cocktail', 1, 'can', NULL, NULL, FALSE),
++  ('Fruit Salad', 'Table Cream', 2, 'can', 1, 1, FALSE),
++  ('Fruit Salad', 'All-Purpose Cream', 2, 'pack', 1, 2, FALSE),
++  ('Fruit Salad', 'Condensed Milk', 1, 'can', NULL, NULL, FALSE),
++  ('Fruit Salad', 'Kaong', 0.15, 'jar', 2, 1, TRUE),
++  ('Fruit Salad', 'Nata de Coco', 0.15, 'jar', 2, 2, TRUE),
++  -- Leche Flan
++  ('Leche Flan', 'Eggs', 10, 'pcs', NULL, NULL, FALSE),
++  ('Leche Flan', 'Condensed Milk', 1, 'can', NULL, NULL, FALSE),
++  ('Leche Flan', 'Evaporated Milk', 1, 'can', NULL, NULL, FALSE),
++  ('Leche Flan', 'White Sugar', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Leche Flan', 'Vanilla Extract', 0.005, 'bottle', NULL, NULL, TRUE),
++  -- Mango Graham
++  ('Mango Graham', 'Ripe Mangoes', 1, 'kg', NULL, NULL, FALSE),
++  ('Mango Graham', 'Graham Crackers', 2, 'pack', NULL, NULL, FALSE),
++  ('Mango Graham', 'All-Purpose Cream', 2, 'pack', NULL, NULL, FALSE),
++  ('Mango Graham', 'Condensed Milk', 1, 'can', NULL, NULL, FALSE),
++  ('Mango Graham', 'Vanilla Extract', 0.005, 'bottle', NULL, NULL, TRUE),
++  -- Macaroni Salad
++  ('Macaroni Salad', 'Elbow Macaroni', 0.5, 'kg', NULL, NULL, FALSE),
++  ('Macaroni Salad', 'Mayonnaise', 0.35, 'kg', NULL, NULL, FALSE),
++  ('Macaroni Salad', 'Condensed Milk', 0.15, 'can', NULL, NULL, FALSE),
++  ('Macaroni Salad', 'Table Cream', 1, 'can', NULL, NULL, FALSE),
++  ('Macaroni Salad', 'Cheese', 0.15, 'kg', NULL, NULL, FALSE),
++  ('Macaroni Salad', 'Canned Fruit Cocktail', 0.5, 'can', 1, 1, FALSE),
++  ('Macaroni Salad', 'Chicken', 0.25, 'kg', 1, 2, FALSE),
++  ('Macaroni Salad', 'Salt', 0.005, 'kg', NULL, NULL, FALSE),
++  ('Macaroni Salad', 'White Sugar', 0.03, 'kg', NULL, NULL, FALSE),
++  ('Macaroni Salad', 'Pickle Relish', 0.06, 'jar', NULL, NULL, TRUE);
++
++-- Checks: every dish and ingredient must exist, and the unit in the PDF must match the system
++DO $$
++DECLARE
++    bad TEXT;
++BEGIN
++    SELECT string_agg(DISTINCT s.dish, ', ') INTO bad
++      FROM recipe_src s
++      LEFT JOIN items i ON i.name = s.dish AND i.item_type = 'food'
++     WHERE i.id IS NULL;
++    IF bad IS NOT NULL THEN
++        RAISE EXCEPTION 'These dishes are not in the system (load the real items first): %', bad;
++    END IF;
++
++    SELECT string_agg(DISTINCT s.ingredient, ', ') INTO bad
++      FROM recipe_src s
++      LEFT JOIN items i ON i.name = s.ingredient AND i.item_type = 'ingredient'
++     WHERE i.id IS NULL;
++    IF bad IS NOT NULL THEN
++        RAISE EXCEPTION 'These ingredients are not in the system: %', bad;
++    END IF;
++
++    SELECT string_agg(DISTINCT s.ingredient || ' (recipe says ' || s.unit || ', system says ' || i.unit || ')', ', ')
++      INTO bad
++      FROM recipe_src s
++      JOIN items i ON i.name = s.ingredient AND i.item_type = 'ingredient'
++     WHERE i.unit <> s.unit;
++    IF bad IS NOT NULL THEN
++        RAISE EXCEPTION 'The unit does not match the system for: %', bad;
++    END IF;
++END
++$$;
++
++-- Replace the recipes of the dishes above, then load them
++DELETE FROM recipe_ingredients
++ WHERE menu_item_id IN (SELECT i.id
++                          FROM items i
++                         WHERE i.item_type = 'food'
++                           AND i.name IN (SELECT dish FROM recipe_src));
++
++INSERT INTO recipe_ingredients (menu_item_id, ingredient_item_id, qty_per_tray, is_optional, alt_group, alt_rank)
++SELECT m.id, g.id, s.qty_per_tray, s.is_optional, s.alt_group, s.alt_rank
++  FROM recipe_src s
++  JOIN items m ON m.name = s.dish       AND m.item_type = 'food'
++  JOIN items g ON g.name = s.ingredient AND g.item_type = 'ingredient'
++ ORDER BY m.id, s.alt_group NULLS FIRST, s.alt_rank;
++
++INSERT INTO audit_log (username, action, entity, details)
++SELECT 'script', 'recipes.import', 'recipe',
++       jsonb_build_object('dishes', COUNT(DISTINCT dish), 'lines', COUNT(*))
++  FROM recipe_src;
++
++COMMIT;
++
++-- Summary
++SELECT COUNT(DISTINCT menu_item_id)                  AS dishes_with_recipe,
++       COUNT(*)                                      AS recipe_lines,
++       COUNT(*) FILTER (WHERE is_optional)           AS optional_lines,
++       COUNT(*) FILTER (WHERE alt_group IS NOT NULL) AS lines_in_or_groups
++  FROM recipe_ingredients;
++
++-- Dishes that still have no recipe (a dish added later in the app has none until one is loaded)
++SELECT name AS dish_without_recipe
++  FROM items
++ WHERE item_type = 'food' AND is_active
++   AND id NOT IN (SELECT menu_item_id FROM recipe_ingredients)
++ ORDER BY name;
+diff --git a/database/tests/02_recipe_deduction_test.sql b/database/tests/02_recipe_deduction_test.sql
+new file mode 100644
+index 0000000..367ce8a
+--- /dev/null
++++ b/database/tests/02_recipe_deduction_test.sql
+@@ -0,0 +1,316 @@
++-- Tests for recipe deduction (migration 007). Nothing is saved: every test is rolled back.
++--
++-- Needs the REAL data and a user named 'kitchen':
++--   03_real_menu_and_ingredients.sql, 05_opening_stock.sql, 06_recipes.sql
++-- (the numbers below come from the opening stock: e.g. 7.5 kg Pork Pata, 12 servings of Kare-Kare)
++--
++--   psql -U postgres -h localhost -d mamitas_kitchen -f database/tests/02_recipe_deduction_test.sql
++--
++-- Every line should say PASS.
++\set ON_ERROR_STOP off
++\set QUIET on
++SET client_min_messages = notice;
++
++CREATE FUNCTION pg_temp.check(p_name TEXT, p_ok BOOLEAN, p_detail TEXT DEFAULT '') RETURNS VOID AS $$
++BEGIN
++    IF p_ok THEN RAISE NOTICE 'PASS  %', p_name;
++    ELSE RAISE NOTICE 'FAIL  %   (%)', p_name, p_detail;
++    END IF;
++END;
++$$ LANGUAGE plpgsql;
++
++-- Stock of an item that can be used today, by name
++CREATE FUNCTION pg_temp.usable(p_name TEXT) RETURNS NUMERIC AS $$
++    SELECT fn_usable_qty((SELECT id FROM items WHERE name = p_name));
++$$ LANGUAGE sql;
++
++-- Did running this SQL raise an error whose message contains the text?
++CREATE FUNCTION pg_temp.raises(p_sql TEXT, p_needle TEXT) RETURNS BOOLEAN AS $$
++BEGIN
++    EXECUTE p_sql;
++    RETURN FALSE;
++EXCEPTION WHEN OTHERS THEN
++    RETURN position(p_needle IN SQLERRM) > 0;
++END;
++$$ LANGUAGE plpgsql;
++
++\echo '--- 1. Add 2 trays of Kare-Kare: every ingredient comes off x2, servings go up by 20 ---'
++BEGIN;
++DO $$
++DECLARE
++    v_kitchen  INTEGER := (SELECT id FROM users WHERE username = 'kitchen');
++    v_dish     INTEGER := (SELECT id FROM items WHERE name = 'Kare-Kare (Pork Pata)');
++    v_dish_was NUMERIC := pg_temp.usable('Kare-Kare (Pork Pata)');
++    v_moves    BIGINT  := (SELECT COUNT(*) FROM stock_movements);
++    v_result   JSONB;
++    r          RECORD;
++BEGIN
++    CREATE TEMP TABLE before_stock ON COMMIT DROP AS
++        SELECT i.name, fn_usable_qty(i.id) AS qty FROM items i WHERE i.item_type = 'ingredient';
++
++    v_result := fn_add_menu_trays(v_dish, 2, v_kitchen);
++
++    PERFORM pg_temp.check('Kare-Kare servings go up by 20 (2 trays x 10)',
++        pg_temp.usable('Kare-Kare (Pork Pata)') = v_dish_was + 20,
++        format('was %s, now %s', v_dish_was, pg_temp.usable('Kare-Kare (Pork Pata)')));
++    PERFORM pg_temp.check('The result reports 2 trays, 20 servings, a recipe, and 11 ingredients used',
++        (v_result->>'trays')::INT = 2 AND (v_result->>'servings')::INT = 20
++        AND (v_result->>'hasRecipe')::BOOLEAN AND jsonb_array_length(v_result->'used') = 11,
++        v_result::TEXT);
++
++    FOR r IN SELECT * FROM (VALUES
++            ('Pork Pata', 3.0), ('Eggplant', 0.6), ('Sitaw (String Beans)', 4.0), ('Pechay', 2.0),
++            ('Banana Blossom', 2.0), ('Peanut Butter', 0.5), ('Bagoong Alamang', 0.3),
++            ('Annatto (Atsuete)', 0.03), ('Garlic', 0.08), ('Onion', 0.2), ('Salt', 0.02)
++         ) AS e(name, delta)
++    LOOP
++        PERFORM pg_temp.check(format('%s goes down by %s', r.name, r.delta),
++            (SELECT qty FROM before_stock WHERE name = r.name) - pg_temp.usable(r.name) = r.delta,
++            format('was %s, now %s', (SELECT qty FROM before_stock WHERE name = r.name), pg_temp.usable(r.name)));
++    END LOOP;
++
++    PERFORM pg_temp.check('Exactly those 11 ingredients changed, no others',
++        (SELECT COUNT(*) FROM before_stock b WHERE pg_temp.usable(b.name) <> b.qty) = 11);
++
++    PERFORM pg_temp.check('The log has 11 USED rows (no order) and 1 IN row of 20 servings',
++        (SELECT COUNT(*) FROM stock_movements WHERE id > 0 AND movement_type = 'USED' AND order_id IS NULL
++            AND reason = 'Cooked 2 trays of Kare-Kare (Pork Pata)' AND user_id = v_kitchen) = 11
++        AND (SELECT COUNT(*) FROM stock_movements WHERE item_id = v_dish AND movement_type = 'IN'
++            AND qty = 20 AND reason = '2 trays cooked (20 servings)') = 1
++        AND (SELECT COUNT(*) FROM stock_movements) = v_moves + 12);
++
++    PERFORM pg_temp.check('The new servings batch expires today',
++        (SELECT expiry_date = received_date FROM inventory_batches WHERE id = (v_result->>'batchId')::INT));
++END
++$$;
++ROLLBACK;
++
++\echo '--- 2. FIFO: an older batch (received yesterday) is used up before the batch received today ---'
++BEGIN;
++DO $$
++DECLARE
++    v_kitchen INTEGER := (SELECT id FROM users WHERE username = 'kitchen');
++    v_pata    INTEGER := (SELECT id FROM items WHERE name = 'Pork Pata');
++    v_old     INTEGER;
++    v_new     INTEGER;
++    v_open    INTEGER;
++BEGIN
++    -- the opening batch (7.5 kg, received today) already exists. Add one received yesterday and one today.
++    INSERT INTO inventory_batches (item_id, qty_received, qty_remaining, received_date, expiry_date)
++    VALUES (v_pata, 1, 1, CURRENT_DATE - 1, CURRENT_DATE + 3) RETURNING id INTO v_old;
++    INSERT INTO inventory_batches (item_id, qty_received, qty_remaining, received_date, expiry_date)
++    VALUES (v_pata, 5, 5, CURRENT_DATE, CURRENT_DATE + 4) RETURNING id INTO v_new;
++    SELECT id INTO v_open FROM inventory_batches WHERE item_id = v_pata AND id NOT IN (v_old, v_new);
++
++    -- 3 trays of Kare-Kare need 4.5 kg Pork Pata: 1 from yesterday's batch, 3.5 from the opening batch
++    PERFORM fn_add_menu_trays((SELECT id FROM items WHERE name = 'Kare-Kare (Pork Pata)'), 3, v_kitchen);
++
++    PERFORM pg_temp.check('Yesterday''s batch is emptied first (1 kg -> 0)',
++        (SELECT qty_remaining FROM inventory_batches WHERE id = v_old) = 0);
++    PERFORM pg_temp.check('Then the opening batch (7.5 kg -> 4)',
++        (SELECT qty_remaining FROM inventory_batches WHERE id = v_open) = 4);
++    PERFORM pg_temp.check('The newest batch is untouched (5 kg)',
++        (SELECT qty_remaining FROM inventory_batches WHERE id = v_new) = 5);
++    PERFORM pg_temp.check('The log shows 1 kg from the old batch, then 3.5 kg from the opening batch',
++        (SELECT string_agg(batch_id::TEXT || ':' || qty::TEXT, ' ' ORDER BY id)
++           FROM stock_movements WHERE item_id = v_pata AND movement_type = 'USED')
++        = v_old::TEXT || ':1.000 ' || v_open::TEXT || ':3.500');
++END
++$$;
++ROLLBACK;
++
++\echo '--- 3. FIFO on the same day: the batch added first is used first ---'
++BEGIN;
++DO $$
++DECLARE
++    v_kitchen INTEGER := (SELECT id FROM users WHERE username = 'kitchen');
++    v_belly   INTEGER := (SELECT id FROM items WHERE name = 'Pork Belly');
++    v_open    INTEGER;
++    v_new     INTEGER;
++BEGIN
++    SELECT id INTO v_open FROM inventory_batches WHERE item_id = v_belly;
++    INSERT INTO inventory_batches (item_id, qty_received, qty_remaining, received_date, expiry_date)
++    VALUES (v_belly, 5, 5, CURRENT_DATE, CURRENT_DATE + 4) RETURNING id INTO v_new;
++
++    -- 6 trays of Lechon Kawali need 9 kg Pork Belly: all 7.5 kg of the first batch, then 1.5 kg
++    PERFORM fn_add_menu_trays((SELECT id FROM items WHERE name = 'Lechon Kawali'), 6, v_kitchen);
++
++    PERFORM pg_temp.check('The first batch is used up (7.5 -> 0)',
++        (SELECT qty_remaining FROM inventory_batches WHERE id = v_open) = 0);
++    PERFORM pg_temp.check('The second batch gives the rest (5 -> 3.5)',
++        (SELECT qty_remaining FROM inventory_batches WHERE id = v_new) = 3.5);
++END
++$$;
++ROLLBACK;
++
++\echo '--- 4. Not enough stock: ONE error listing every shortage, and nothing changes ---'
++BEGIN;
++DO $$
++DECLARE
++    v_kitchen  INTEGER := (SELECT id FROM users WHERE username = 'kitchen');
++    v_dish     INTEGER := (SELECT id FROM items WHERE name = 'Kare-Kare (Pork Pata)');
++    v_dish_was NUMERIC := pg_temp.usable('Kare-Kare (Pork Pata)');
++    v_moves    BIGINT  := (SELECT COUNT(*) FROM stock_movements);
++    v_batches  BIGINT  := (SELECT COUNT(*) FROM inventory_batches);
++    v_sum_was  NUMERIC := (SELECT SUM(qty_remaining) FROM inventory_batches);
++    v_msg      TEXT;
++BEGIN
++    BEGIN
++        PERFORM fn_add_menu_trays(v_dish, 10, v_kitchen);   -- needs 15 kg Pork Pata, only 7.5 kg
++        v_msg := 'NO ERROR';
++    EXCEPTION WHEN OTHERS THEN
++        v_msg := SQLERRM;
++    END;
++
++    PERFORM pg_temp.check('10 trays is refused', v_msg <> 'NO ERROR', v_msg);
++    PERFORM pg_temp.check('The message names Pork Pata with the amount needed and what is there',
++        position('Pork Pata needs 15 kg, only 7.5 kg available' IN v_msg) > 0, v_msg);
++    PERFORM pg_temp.check('...and the other short ingredients too (Sitaw, Pechay, Banana Blossom)',
++        position('Sitaw (String Beans) needs 20 bunch, only 9 bunch available' IN v_msg) > 0
++        AND position('Pechay needs 10 bunch, only 6 bunch available' IN v_msg) > 0
++        AND position('Banana Blossom needs 10 pcs, only 3 pcs available' IN v_msg) > 0, v_msg);
++    PERFORM pg_temp.check('...but not an ingredient that is fine (Eggplant)',
++        position('Eggplant' IN v_msg) = 0, v_msg);
++    PERFORM pg_temp.check('Nothing was saved: no servings, no batch, no log rows, no stock taken',
++        pg_temp.usable('Kare-Kare (Pork Pata)') = v_dish_was
++        AND (SELECT COUNT(*) FROM stock_movements) = v_moves
++        AND (SELECT COUNT(*) FROM inventory_batches) = v_batches
++        AND (SELECT SUM(qty_remaining) FROM inventory_batches) = v_sum_was);
++END
++$$;
++ROLLBACK;
++
++\echo '--- 5. "Or" choices (Chop Suey: Pork OR Chicken, 0.5 kg per tray) ---'
++BEGIN;
++DO $$
++DECLARE
++    v_kitchen INTEGER := (SELECT id FROM users WHERE username = 'kitchen');
++    v_dish    INTEGER := (SELECT id FROM items WHERE name = 'Chop Suey');
++    v_pork    NUMERIC;
++    v_chicken NUMERIC;
++    v_shrimp  NUMERIC := pg_temp.usable('Shrimp');
++    v_msg     TEXT;
++BEGIN
++    v_pork := pg_temp.usable('Pork');
++    v_chicken := pg_temp.usable('Chicken');
++
++    PERFORM fn_add_menu_trays(v_dish, 1, v_kitchen);
++    PERFORM pg_temp.check('The first choice (Pork) is used when it has enough: 0.5 kg off',
++        v_pork - pg_temp.usable('Pork') = 0.5);
++    PERFORM pg_temp.check('Chicken is not touched', pg_temp.usable('Chicken') = v_chicken);
++    PERFORM pg_temp.check('Shrimp is optional in the recipe, so it is NOT taken',
++        pg_temp.usable('Shrimp') = v_shrimp);
++
++    -- run out of Pork: the next choice takes over
++    UPDATE inventory_batches SET qty_remaining = 0 WHERE item_id = (SELECT id FROM items WHERE name = 'Pork');
++    PERFORM fn_add_menu_trays(v_dish, 1, v_kitchen);
++    PERFORM pg_temp.check('With no Pork left, Chicken is used instead: 0.5 kg off',
++        v_chicken - pg_temp.usable('Chicken') = 0.5);
++
++    -- run out of both
++    UPDATE inventory_batches SET qty_remaining = 0 WHERE item_id = (SELECT id FROM items WHERE name = 'Chicken');
++    BEGIN
++        PERFORM fn_add_menu_trays(v_dish, 1, v_kitchen);
++        v_msg := 'NO ERROR';
++    EXCEPTION WHEN OTHERS THEN
++        v_msg := SQLERRM;
++    END;
++    PERFORM pg_temp.check('With neither, the error lists both choices',
++        position('none of these has enough' IN v_msg) > 0 AND position('Pork needs 0.5 kg' IN v_msg) > 0
++        AND position('Chicken needs 0.5 kg' IN v_msg) > 0, v_msg);
++END
++$$;
++ROLLBACK;
++
++\echo '--- 6. Expired ingredient batches do not count ---'
++BEGIN;
++DO $$
++DECLARE
++    v_kitchen INTEGER := (SELECT id FROM users WHERE username = 'kitchen');
++    v_msg     TEXT;
++BEGIN
++    UPDATE inventory_batches SET received_date = CURRENT_DATE - 5, expiry_date = CURRENT_DATE - 1
++     WHERE item_id = (SELECT id FROM items WHERE name = 'Garlic');
++    BEGIN
++        PERFORM fn_add_menu_trays((SELECT id FROM items WHERE name = 'Kare-Kare (Pork Pata)'), 1, v_kitchen);
++        v_msg := 'NO ERROR';
++    EXCEPTION WHEN OTHERS THEN
++        v_msg := SQLERRM;
++    END;
++    PERFORM pg_temp.check('Expired Garlic cannot be used: "Garlic needs 0.04 kg, only 0 kg available"',
++        position('Garlic needs 0.04 kg, only 0 kg available' IN v_msg) > 0, v_msg);
++END
++$$;
++ROLLBACK;
++
++\echo '--- 7. A dish with no recipe still gets its servings, and nothing is taken ---'
++BEGIN;
++DO $$
++DECLARE
++    v_kitchen INTEGER := (SELECT id FROM users WHERE username = 'kitchen');
++    v_dish    INTEGER;
++    v_used    BIGINT  := (SELECT COUNT(*) FROM stock_movements WHERE movement_type = 'USED');
++    v_result  JSONB;
++BEGIN
++    INSERT INTO items (name, item_type, category_id, unit, price)
++    SELECT 'Test Dish Without Recipe', 'food', id, 'servings', 5 FROM categories WHERE name = 'Main dishes'
++    RETURNING id INTO v_dish;
++
++    v_result := fn_add_menu_trays(v_dish, 2, v_kitchen);
++    PERFORM pg_temp.check('20 servings are added', pg_temp.usable('Test Dish Without Recipe') = 20, v_result::TEXT);
++    PERFORM pg_temp.check('hasRecipe is false and nothing was listed as used',
++        NOT (v_result->>'hasRecipe')::BOOLEAN AND jsonb_array_length(v_result->'used') = 0, v_result::TEXT);
++    PERFORM pg_temp.check('No ingredient was taken',
++        (SELECT COUNT(*) FROM stock_movements WHERE movement_type = 'USED') = v_used);
++END
++$$;
++ROLLBACK;
++
++\echo '--- 8. Bad input is refused ---'
++BEGIN;
++INSERT INTO items (name, item_type, category_id, unit, price)
++SELECT 'Test Tray', 'food_tray', id, 'trays', 30 FROM categories WHERE name = 'Food trays';
++DO $$
++DECLARE
++    v_kitchen INTEGER := (SELECT id FROM users WHERE username = 'kitchen');
++    v_dish    INTEGER := (SELECT id FROM items WHERE name = 'Kare-Kare (Pork Pata)');
++BEGIN
++    PERFORM pg_temp.check('0 trays is refused',
++        pg_temp.raises(format('SELECT fn_add_menu_trays(%s, 0, %s)', v_dish, v_kitchen), 'Trays must be'));
++    PERFORM pg_temp.check('Negative trays are refused',
++        pg_temp.raises(format('SELECT fn_add_menu_trays(%s, -2, %s)', v_dish, v_kitchen), 'Trays must be'));
++    PERFORM pg_temp.check('Empty trays are refused',
++        pg_temp.raises(format('SELECT fn_add_menu_trays(%s, NULL, %s)', v_dish, v_kitchen), 'Trays must be'));
++    PERFORM pg_temp.check('An unknown item is refused',
++        pg_temp.raises(format('SELECT fn_add_menu_trays(999999, 1, %s)', v_kitchen), 'Item not found'));
++    PERFORM pg_temp.check('An ingredient is refused',
++        pg_temp.raises(format('SELECT fn_add_menu_trays(%s, 1, %s)',
++            (SELECT id FROM items WHERE name = 'Garlic'), v_kitchen), 'not a dish sold per serving'));
++    PERFORM pg_temp.check('A food tray (sold per tray) is refused',
++        pg_temp.raises(format('SELECT fn_add_menu_trays(%s, 1, %s)',
++            (SELECT id FROM items WHERE name = 'Test Tray'), v_kitchen), 'not a dish sold per serving'));
++    PERFORM pg_temp.check('A recipe cannot list a dish as an ingredient',
++        pg_temp.raises(format('INSERT INTO recipe_ingredients (menu_item_id, ingredient_item_id, qty_per_tray) VALUES (%s, %s, 1)',
++            v_dish, (SELECT id FROM items WHERE name = 'Binagoongan')), 'only list ingredients'));
++    PERFORM pg_temp.check('A recipe cannot belong to an ingredient',
++        pg_temp.raises(format('INSERT INTO recipe_ingredients (menu_item_id, ingredient_item_id, qty_per_tray) VALUES (%s, %s, 1)',
++            (SELECT id FROM items WHERE name = 'Salt'), (SELECT id FROM items WHERE name = 'Garlic')), 'belong to a food'));
++    PERFORM pg_temp.check('The same ingredient cannot be listed twice in one recipe',
++        pg_temp.raises(format('INSERT INTO recipe_ingredients (menu_item_id, ingredient_item_id, qty_per_tray) VALUES (%s, %s, 1)',
++            v_dish, (SELECT id FROM items WHERE name = 'Garlic')), 'recipe_one_line_per_ingredient'));
++END
++$$;
++ROLLBACK;
++
++\echo '--- 9. The app user (mk_app) can add trays but cannot edit recipes ---'
++\echo '    (run this file as a user who can SET ROLE mk_app; skip if the role does not exist)'
++BEGIN;
++SET LOCAL ROLE mk_app;
++\echo 'Should print 10 (servings added as mk_app):'
++SELECT (fn_add_menu_trays((SELECT id FROM items WHERE name = 'Kare-Kare (Pork Pata)'), 1,
++                          (SELECT id FROM users WHERE username = 'kitchen')))->>'servings' AS servings_added;
++\echo 'Should FAIL with permission denied:'
++UPDATE recipe_ingredients SET qty_per_tray = 99;
++ROLLBACK;
++
++\echo '--- Done: every line above should say PASS ---'
+diff --git a/database/tests/03_user_delete_and_menu_enable_test.sql b/database/tests/03_user_delete_and_menu_enable_test.sql
+new file mode 100644
+index 0000000..54311f0
+--- /dev/null
++++ b/database/tests/03_user_delete_and_menu_enable_test.sql
+@@ -0,0 +1,213 @@
++-- Tests for migration 008: enabling / disabling menu items, and deleting users. Nothing is saved:
++-- every test is rolled back.
++--
++-- Needs the REAL data and a user named 'kitchen':
++--   03_real_menu_and_ingredients.sql, 05_opening_stock.sql, 06_recipes.sql
++--
++--   psql -U postgres -h localhost -d mamitas_kitchen -f database/tests/03_user_delete_and_menu_enable_test.sql
++--
++-- Every line should say PASS.
++\set ON_ERROR_STOP off
++\set QUIET on
++SET client_min_messages = notice;
++
++CREATE FUNCTION pg_temp.check(p_name TEXT, p_ok BOOLEAN, p_detail TEXT DEFAULT '') RETURNS VOID AS $$
++BEGIN
++    IF p_ok THEN RAISE NOTICE 'PASS  %', p_name;
++    ELSE RAISE NOTICE 'FAIL  %   (%)', p_name, p_detail;
++    END IF;
++END;
++$$ LANGUAGE plpgsql;
++
++-- Did running this SQL raise an error whose message contains the text?
++CREATE FUNCTION pg_temp.raises(p_sql TEXT, p_needle TEXT) RETURNS BOOLEAN AS $$
++BEGIN
++    EXECUTE p_sql;
++    RETURN FALSE;
++EXCEPTION WHEN OTHERS THEN
++    RETURN position(p_needle IN SQLERRM) > 0;
++END;
++$$ LANGUAGE plpgsql;
++
++\echo '--- 1. A menu item is enabled by default, and the stock view shows it ---'
++BEGIN;
++DO $$
++BEGIN
++    PERFORM pg_temp.check('Every food and tray starts enabled',
++        (SELECT COUNT(*) FROM items WHERE item_type <> 'ingredient' AND NOT is_enabled) = 0);
++    PERFORM pg_temp.check('v_item_stock has is_enabled (true for Kare-Kare)',
++        (SELECT is_enabled FROM v_item_stock WHERE name = 'Kare-Kare (Pork Pata)'));
++    PERFORM pg_temp.check('Ingredients are always enabled in the view',
++        (SELECT bool_and(is_enabled) FROM v_item_stock WHERE item_type = 'ingredient'));
++END
++$$;
++ROLLBACK;
++
++\echo '--- 2. Disable: the view shows it, and the stock stays ---'
++BEGIN;
++DO $$
++DECLARE
++    v_dish   INTEGER := (SELECT id FROM items WHERE name = 'Kare-Kare (Pork Pata)');
++    v_before NUMERIC := (SELECT qty_usable FROM v_item_stock WHERE name = 'Kare-Kare (Pork Pata)');
++BEGIN
++    UPDATE items SET is_enabled = FALSE WHERE id = v_dish;
++    PERFORM pg_temp.check('v_item_stock now says disabled',
++        NOT (SELECT is_enabled FROM v_item_stock WHERE item_id = v_dish));
++    PERFORM pg_temp.check('The servings already cooked are still there (12)',
++        (SELECT qty_usable FROM v_item_stock WHERE item_id = v_dish) = v_before AND v_before = 12);
++END
++$$;
++ROLLBACK;
++
++\echo '--- 3. Adding trays of a disabled dish is refused, and nothing changes; enabling it again works ---'
++BEGIN;
++DO $$
++DECLARE
++    v_kitchen INTEGER := (SELECT id FROM users WHERE username = 'kitchen');
++    v_dish    INTEGER := (SELECT id FROM items WHERE name = 'Kare-Kare (Pork Pata)');
++    v_moves   BIGINT  := (SELECT COUNT(*) FROM stock_movements);
++    v_sum     NUMERIC := (SELECT SUM(qty_remaining) FROM inventory_batches);
++    v_msg     TEXT;
++BEGIN
++    UPDATE items SET is_enabled = FALSE WHERE id = v_dish;
++    BEGIN
++        PERFORM fn_add_menu_trays(v_dish, 1, v_kitchen);
++        v_msg := 'NO ERROR';
++    EXCEPTION WHEN OTHERS THEN
++        v_msg := SQLERRM;
++    END;
++    PERFORM pg_temp.check('Refused with a clear message',
++        position('"Kare-Kare (Pork Pata)" is disabled' IN v_msg) > 0, v_msg);
++    PERFORM pg_temp.check('No ingredient was taken, no servings added, nothing logged',
++        (SELECT COUNT(*) FROM stock_movements) = v_moves
++        AND (SELECT SUM(qty_remaining) FROM inventory_batches) = v_sum);
++
++    UPDATE items SET is_enabled = TRUE WHERE id = v_dish;
++    PERFORM fn_add_menu_trays(v_dish, 1, v_kitchen);
++    PERFORM pg_temp.check('Enabled again: 1 tray works (12 -> 22 servings)',
++        (SELECT qty_usable FROM v_item_stock WHERE item_id = v_dish) = 22);
++END
++$$;
++ROLLBACK;
++
++\echo '--- 4. A disabled item cannot be sold, whatever path the order takes ---'
++BEGIN;
++DO $$
++DECLARE
++    v_cashier INTEGER;
++    v_session INTEGER;
++    v_order   INTEGER;
++    v_dish    INTEGER := (SELECT id FROM items WHERE name = 'Kare-Kare (Pork Pata)');
++    v_other   INTEGER := (SELECT id FROM items WHERE name = 'Binagoongan');
++    v_msg     TEXT;
++BEGIN
++    INSERT INTO users (username, password_hash, full_name, role)
++    VALUES ('test_cashier_008', 'x', 'Test Cashier', 'cashier') RETURNING id INTO v_cashier;
++    INSERT INTO cashier_sessions (cashier_id, opening_cash) VALUES (v_cashier, 100) RETURNING id INTO v_session;
++    INSERT INTO orders (order_type, total, cashier_id, session_id)
++    VALUES ('dine_in', 13, v_cashier, v_session) RETURNING id INTO v_order;
++
++    UPDATE items SET is_enabled = FALSE WHERE id = v_dish;
++    BEGIN
++        INSERT INTO order_items (order_id, item_id, item_name, unit_price, qty) VALUES (v_order, v_dish, 'Kare-Kare', 13, 1);
++        v_msg := 'NO ERROR';
++    EXCEPTION WHEN OTHERS THEN
++        v_msg := SQLERRM;
++    END;
++    PERFORM pg_temp.check('An order line for a disabled item is refused',
++        position('is disabled and cannot be sold' IN v_msg) > 0, v_msg);
++
++    INSERT INTO order_items (order_id, item_id, item_name, unit_price, qty) VALUES (v_order, v_other, 'Binagoongan', 10.5, 1);
++    PERFORM pg_temp.check('An order line for an enabled item still works',
++        (SELECT COUNT(*) FROM order_items WHERE order_id = v_order) = 1);
++
++    UPDATE items SET is_enabled = TRUE WHERE id = v_dish;
++    INSERT INTO order_items (order_id, item_id, item_name, unit_price, qty) VALUES (v_order, v_dish, 'Kare-Kare', 13, 1);
++    PERFORM pg_temp.check('...and the item can be sold again once it is enabled',
++        (SELECT COUNT(*) FROM order_items WHERE order_id = v_order) = 2);
++END
++$$;
++ROLLBACK;
++
++\echo '--- 5. Only menu items can be disabled ---'
++BEGIN;
++DO $$
++BEGIN
++    PERFORM pg_temp.check('Disabling an ingredient is refused by the database',
++        pg_temp.raises(format('UPDATE items SET is_enabled = FALSE WHERE id = %s',
++            (SELECT id FROM items WHERE name = 'Garlic')), 'items_enabled_menu_only'));
++END
++$$;
++ROLLBACK;
++
++\echo '--- 6. Deleted users: the username can be used again, but live duplicates are still refused ---'
++BEGIN;
++DO $$
++DECLARE
++    v_old INTEGER;
++BEGIN
++    INSERT INTO users (username, password_hash, full_name, role)
++    VALUES ('jane', 'x', 'Jane Old', 'cashier') RETURNING id INTO v_old;
++
++    PERFORM pg_temp.check('Two live users cannot share a username (any letter case)',
++        pg_temp.raises($q$INSERT INTO users (username, password_hash, full_name, role) VALUES ('JANE', 'x', 'Jane Dup', 'cashier')$q$,
++            'users_username_unique'));
++
++    -- the same statement the app runs when an owner deletes a user
++    UPDATE users
++       SET deleted_at = now(), is_active = FALSE, session_version = session_version + 1,
++           failed_logins = 0, locked_until = NULL
++     WHERE id = v_old;
++
++    INSERT INTO users (username, password_hash, full_name, role) VALUES ('jane', 'x', 'Jane New', 'cashier');
++    PERFORM pg_temp.check('After deleting the first Jane, the name "jane" can be used again',
++        (SELECT COUNT(*) FROM users WHERE lower(username) = 'jane') = 2
++        AND (SELECT COUNT(*) FROM users WHERE lower(username) = 'jane' AND deleted_at IS NULL) = 1);
++
++    PERFORM pg_temp.check('The login lookup (username, not deleted) finds only the new Jane',
++        (SELECT full_name FROM users WHERE lower(username) = lower('jane') AND deleted_at IS NULL) = 'Jane New');
++    PERFORM pg_temp.check('The users list (not deleted) hides the old Jane',
++        NOT EXISTS (SELECT 1 FROM users WHERE id = v_old AND deleted_at IS NULL));
++    PERFORM pg_temp.check('The old Jane row is still there, so her history keeps its name',
++        (SELECT full_name FROM users WHERE id = v_old) = 'Jane Old');
++END
++$$;
++ROLLBACK;
++
++\echo '--- 7. History survives a deleted user (orders and cash sessions still point at the row) ---'
++BEGIN;
++DO $$
++DECLARE
++    v_cashier INTEGER;
++    v_session INTEGER;
++BEGIN
++    INSERT INTO users (username, password_hash, full_name, role)
++    VALUES ('test_cashier_008', 'x', 'Test Cashier', 'cashier') RETURNING id INTO v_cashier;
++    INSERT INTO cashier_sessions (cashier_id, opening_cash) VALUES (v_cashier, 100) RETURNING id INTO v_session;
++    INSERT INTO orders (order_type, total, cashier_id, session_id)
++    VALUES ('dine_in', 5, v_cashier, v_session);
++    UPDATE cashier_sessions SET closed_at = now(), expected_cash = 105, counted_cash = 105, cash_difference = 0
++     WHERE id = v_session;
++
++    UPDATE users SET deleted_at = now(), is_active = FALSE WHERE id = v_cashier;
++
++    PERFORM pg_temp.check('The session summary still shows the deleted cashier by name',
++        (SELECT cashier FROM v_session_summary WHERE session_id = v_session) = 'Test Cashier');
++    PERFORM pg_temp.check('The order is still linked to the deleted cashier',
++        (SELECT COUNT(*) FROM orders o JOIN users u ON u.id = o.cashier_id WHERE o.cashier_id = v_cashier AND u.deleted_at IS NOT NULL) = 1);
++END
++$$;
++ROLLBACK;
++
++\echo '--- 8. The app user (mk_app) can switch items and delete-mark users, but still cannot DELETE rows ---'
++BEGIN;
++SET LOCAL ROLE mk_app;
++\echo 'Should print f (disabled as mk_app):'
++UPDATE items SET is_enabled = FALSE WHERE name = 'Kare-Kare (Pork Pata)' RETURNING is_enabled;
++\echo 'Should print one row (soft delete as mk_app):'
++UPDATE users SET deleted_at = now(), is_active = FALSE WHERE username = 'kitchen' RETURNING username, deleted_at IS NOT NULL AS deleted;
++\echo 'Should FAIL with permission denied (real DELETE is still not allowed):'
++DELETE FROM users WHERE username = 'kitchen';
++ROLLBACK;
++
++\echo '--- Done: every line above should say PASS ---'
+diff --git a/frontend/src/api/client.js b/frontend/src/api/client.js
+index 20b3186..a27fa64 100644
+--- a/frontend/src/api/client.js
++++ b/frontend/src/api/client.js
+@@ -46,4 +46,5 @@ export const api = {
+   get: (path) => request('GET', path),
+   post: (path, body) => request('POST', path, body ?? {}),
+   patch: (path, body) => request('PATCH', path, body ?? {}),
++  delete: (path) => request('DELETE', path),
+ };
+\ No newline at end of file
+diff --git a/frontend/src/components/NotificationBell.jsx b/frontend/src/components/NotificationBell.jsx
+index 9a59080..d3ba10f 100644
+--- a/frontend/src/components/NotificationBell.jsx
++++ b/frontend/src/components/NotificationBell.jsx
+@@ -33,6 +33,7 @@ export default function NotificationBell() {
+   const list = [];
+   if (user.role === 'kitchen' || user.role === 'owner') {
+     items.forEach((i) => {
++      if (i.isEnabled === false) return; // a disabled item is off the menu, so no low-stock alert
+       const stock = (i.type === 'ingredient' ? stockByItem[i.id] : usableStockByItem[i.id]) || 0;
+       const s = stockStatus(stock, i.minLevel);
+       if (s.key !== 'in') {
+diff --git a/frontend/src/components/inventory/AddMenuItemModal.jsx b/frontend/src/components/inventory/AddMenuItemModal.jsx
+index bb224af..c86b84b 100644
+--- a/frontend/src/components/inventory/AddMenuItemModal.jsx
++++ b/frontend/src/components/inventory/AddMenuItemModal.jsx
+@@ -63,8 +63,13 @@ export default function AddMenuItemModal({ onClose, onDone }) {
+           <span className="hint">An alert shows when available {unit} are at or below this number.</span>
+         </div>
+         <div className="field">
+-          <label htmlFor="mi-qty">{unit === 'trays' ? 'Trays' : 'Servings'} cooked today (optional)</label>
++          <label htmlFor="mi-qty">Trays cooked today (optional)</label>
+           <input id="mi-qty" type="number" min="0" step="1" value={form.qty} onChange={set('qty')} />
++          {form.type === 'food' && (
++            <span className="hint">
++              1 tray = 10 servings. A new dish has no recipe yet, so no ingredients are deducted for these trays.
++            </span>
++          )}
+         </div>
+         {error && <p className="error" role="alert">{error}</p>}
+         <div className="form-actions">
+diff --git a/frontend/src/components/inventory/StockInModal.jsx b/frontend/src/components/inventory/StockInModal.jsx
+index 3895dd0..baad4ba 100644
+--- a/frontend/src/components/inventory/StockInModal.jsx
++++ b/frontend/src/components/inventory/StockInModal.jsx
+@@ -14,10 +14,14 @@ export default function StockInModal({
+   const options = items.filter(
+     (i) =>
+       (!types || types.includes(i.type)) &&
++      i.isEnabled !== false && // a disabled menu item cannot get new stock
+       !(noExpiryOnly && i.type === 'ingredient' && i.hasExpiry)
+   );
+   const item = items.find((i) => i.id === Number(form.itemId));
+   const isMenu = item && item.type !== 'ingredient';
++  const isFood = item?.type === 'food';
++  const perTray = item?.servingsPerTray ?? 10;
++  const trays = Number(form.qty);
+ 
+   const submit = async (e) => {
+     e.preventDefault();
+@@ -32,7 +36,7 @@ export default function StockInModal({
+   };
+ 
+   return (
+-    <Modal title={isMenu ? 'Add servings' : 'Stock in'} onClose={onClose}>
++    <Modal title={isMenu ? 'Add trays' : 'Stock in'} onClose={onClose}>
+       <form onSubmit={submit}>
+         {noExpiryOnly && (
+           <div className="info-box">
+@@ -58,12 +62,19 @@ export default function StockInModal({
+         </div>
+         <div className="field">
+           <label htmlFor="si-qty">
+-            {isMenu ? `${item.unit === 'trays' ? 'Trays' : 'Servings'} added` : 'Quantity received'} {item && !isMenu ? `(${item.unit})` : ''}
++            {isMenu ? (isFood ? 'Trays cooked' : 'Trays added') : 'Quantity received'} {item && !isMenu ? `(${item.unit})` : ''}
+           </label>
+           <input
+             id="si-qty" type="number" min="0" step={isMenu ? '1' : 'any'}
+             value={form.qty} onChange={set('qty')}
+           />
++          {isFood && (
++            <span className="hint">
++              1 tray = {perTray} servings
++              {trays > 0 ? ` (${trays} ${trays === 1 ? 'tray' : 'trays'} = ${trays * perTray} servings)` : ''}.
++              The ingredients of this dish are taken from inventory, oldest batch first.
++            </span>
++          )}
+           {isMenu && (
+             <span className="hint">
+               Freshly cooked for the day. No expiry date is needed: these expire at the end of the day.
+diff --git a/frontend/src/context/InventoryContext.jsx b/frontend/src/context/InventoryContext.jsx
+index 0db3a01..6eb1733 100644
+--- a/frontend/src/context/InventoryContext.jsx
++++ b/frontend/src/context/InventoryContext.jsx
+@@ -13,6 +13,15 @@ const fail = (message) => ({ ok: false, message });
+ const toBatch = (b) => ({ ...b, qty: b.qtyRemaining, received: b.receivedDate, expiry: b.expiryDate });
+ const toMovement = (m) => ({ ...m, date: m.createdAt, user: m.recordedBy });
+ 
++// What to tell the person after trays of a dish were added: the servings, and what came off inventory
++function foodAddedMessage(item, r) {
++  const trays = `${r.trays} ${r.trays === 1 ? 'tray' : 'trays'}`;
++  const head = `Added ${trays} (${r.servings} servings) of ${item.name} for today.`;
++  if (!r.hasRecipe) return `${head} This dish has no recipe yet, so no ingredients were deducted.`;
++  const used = r.used.map((u) => `${u.name} ${u.qty} ${u.unit}`).join(', ');
++  return `${head} Ingredients deducted (oldest batch first): ${used}.`;
++}
++
+ export function InventoryProvider({ children }) {
+   const { user } = useAuth();
+   const active = Boolean(user && !user.mustChangePassword && STAFF.includes(user.role));
+@@ -134,16 +143,18 @@ export function InventoryProvider({ children }) {
+     });
+   };
+ 
+-  // Add a menu item: a food (servings) or a food tray. No expiry date: it is cooked fresh for the day.
++  // Add a menu item: a food (cooked by the tray) or a food tray. No expiry date: it is cooked fresh for the day.
+   const addItem = ({ name, type, category, price, minLevel, qty }) =>
+     run(async () => {
++      const start = qty === '' ? undefined : qty;
+       await api.post('/items', {
+         type,
+         name: name.trim(),
+         category,
+         price,
+         minLevel,
+-        qty: qty === '' ? undefined : qty,
++        // A food starts with trays (1 tray = 10 servings). A food tray starts with a quantity.
++        ...(type === 'food' ? { trays: start } : { qty: start }),
+       });
+       return `${name.trim()} was added.`;
+     });
+@@ -160,12 +171,31 @@ export function InventoryProvider({ children }) {
+     });
+   };
+ 
+-  // Ingredients without an expiry date, and servings or trays for the day
++  // Owner only: switch a menu item on or off. A disabled item leaves the POS and cannot get new stock,
++  // but its servings, history and recipe stay.
++  const setMenuEnabled = (itemId, enabled) => {
++    const item = itemMap[itemId];
++    return run(async () => {
++      const { item: r } = await api.patch(`/admin/menu/${itemId}`, { enabled });
++      const name = item?.name ?? r.name ?? 'Item';
++      if (!r.changed) return `${name} was already ${enabled ? 'enabled' : 'disabled'}.`;
++      if (enabled) return `${name} is enabled again. It is back on the POS and in stock-in.`;
++      const left = Number(r.qtyUsable) > 0 ? ` ${r.qtyUsable} ${r.unit} still in stock is kept but cannot be sold.` : '';
++      return `${name} is disabled. It is hidden from the POS and cannot get new stock.${left}`;
++    });
++  };
++
++  // Ingredients without an expiry date, trays of a dish, and food trays for the day
+   const addStock = ({ itemId, qty }) => {
+     const item = itemMap[itemId];
+     if (!item) return Promise.resolve(fail('Choose an item.'));
+     const isMenu = item.type !== 'ingredient';
+     return run(async () => {
++      // A dish is added by the tray: its recipe's ingredients come off inventory, oldest batch first
++      if (item.type === 'food') {
++        const f = await api.post(`/items/${itemId}/batches`, { trays: qty });
++        return foodAddedMessage(item, f);
++      }
+       const r = await api.post(`/items/${itemId}/batches`, { qty });
+       return isMenu
+         ? `Added ${qty} ${item.unit} of ${item.name} for today.`
+@@ -241,7 +271,7 @@ export function InventoryProvider({ children }) {
+       value={{
+         items, batches, movements, stockByItem, usableStockByItem, itemMap, batchMap,
+         ready, error, refresh,
+-        addIngredient, addItem, updateMenuItem, addStock, recordLoss, recordMenuLoss,
++        addIngredient, addItem, updateMenuItem, setMenuEnabled, addStock, recordLoss, recordMenuLoss,
+         writeOffBatch, writeOffExpiredMenu, adjustBatch, adjustMenuStock, updateBatchExpiry,
+       }}
+     >
+diff --git a/frontend/src/context/OrderContext.jsx b/frontend/src/context/OrderContext.jsx
+index 3da581f..a86ea66 100644
+--- a/frontend/src/context/OrderContext.jsx
++++ b/frontend/src/context/OrderContext.jsx
+@@ -34,6 +34,15 @@ export function OrderProvider({ children }) {
+   const loadMenu = useCallback(async () => {
+     const data = await api.get('/menu');
+     setMenuItems(data.items);
++    // An item the owner disabled disappears from the menu. Take it out of the open order too,
++    // so it is not sent to the server and the order is not refused.
++    const onMenu = new Set(data.items.map((m) => m.id));
++    setCart((c) => {
++      const kept = c.filter((l) => onMenu.has(l.itemId));
++      if (kept.length === c.length) return c;
++      requestRef.current = null; // the order changed, so it is a new order
++      return kept;
++    });
+   }, []);
+ 
+   // Load the menu and shop settings when a cashier or owner logs in; clear everything on logout
+diff --git a/frontend/src/pages/admin/Admin.jsx b/frontend/src/pages/admin/Admin.jsx
+index be1d4ff..e115e2a 100644
+--- a/frontend/src/pages/admin/Admin.jsx
++++ b/frontend/src/pages/admin/Admin.jsx
+@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react';
+ import { Users, Settings, UtensilsCrossed, ShieldCheck, Database, Plus, RefreshCw, Download } from 'lucide-react';
+ import { api } from '../../api/client';
+ import { useInventory } from '../../context/InventoryContext';
++import { useAuth } from '../../context/AuthContext';
+ import { useOrders } from '../../context/OrderContext';
+ import { SHOP } from '../../config/shop';
+ import { ROLE_LABELS } from '../../routes/navItems';
+ import StatusBadge from '../../components/StatusBadge';
+ import Modal from '../../components/Modal';
++import ConfirmDialog from '../../components/ConfirmDialog';
+ import AddMenuItemModal from '../../components/inventory/AddMenuItemModal';
+ import EditMenuItemModal from '../../components/inventory/EditMenuItemModal';
+ import { fmtDateTime } from '../../utils/dates';
+@@ -62,6 +64,12 @@ function describeAudit(l) {
+       return `Unlocked account "${d.username || ''}"`;
+     case 'admin.user_signed_out':
+       return `Signed out "${d.username || ''}" from all devices`;
++    case 'admin.user_deleted':
++      return `Deleted user "${d.username || ''}" (${d.role || 'staff'}). Their history was kept`;
++    case 'admin.menu_enabled':
++      return `Enabled "${d.name || 'menu item'}" on the menu`;
++    case 'admin.menu_disabled':
++      return `Disabled "${d.name || 'menu item'}" (hidden from POS and stock-in)`;
+     case 'admin.shop_updated':
+       return `Updated store configuration (${d.name || 'Mamitas’ Kitchen'})`;
+     case 'admin.backup_created':
+@@ -128,9 +136,11 @@ export default function Admin() {
+ 
+ /* ---------- 1. User & Role Management ---------- */
+ function UserManagementTab({ onNotice }) {
++  const { user: me } = useAuth();
+   const [users, setUsers] = useState(FALLBACK_USERS);
+   const [creating, setCreating] = useState(false);
+   const [editing, setEditing] = useState(null);
++  const [deleting, setDeleting] = useState(null);
+ 
+   const loadUsers = () => {
+     api.get('/admin/users')
+@@ -165,6 +175,18 @@ function UserManagementTab({ onNotice }) {
+     }
+   };
+ 
++  const confirmDelete = async () => {
++    const u = deleting;
++    setDeleting(null);
++    try {
++      await api.delete(`/admin/users/${u.id}`);
++      loadUsers();
++      onNotice({ ok: true, message: `Deleted ${u.fullName}. Their past orders and records are kept.` });
++    } catch (err) {
++      onNotice({ ok: false, message: err.message });
++    }
++  };
++
+   const handleSignOutEverywhere = async (u) => {
+     try {
+       await api.post(`/admin/users/${u.id}/sign-out`);
+@@ -229,6 +251,11 @@ function UserManagementTab({ onNotice }) {
+                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => toggleActive(u)}>
+                       {u.isActive ? 'Deactivate' : 'Activate'}
+                     </button>
++                    {u.id !== me?.id && (
++                      <button type="button" className="btn btn-danger btn-sm" onClick={() => setDeleting(u)}>
++                        Delete
++                      </button>
++                    )}
+                   </div>
+                 </td>
+               </tr>
+@@ -237,6 +264,16 @@ function UserManagementTab({ onNotice }) {
+         </table>
+       </div>
+ 
++      {deleting && (
++        <ConfirmDialog
++          title="Delete this user?"
++          message={`Delete ${deleting.fullName} (${deleting.username})? They will no longer be able to sign in and will disappear from this list. Their past orders and records are kept. This cannot be undone here.`}
++          confirmLabel="Delete user"
++          onConfirm={confirmDelete}
++          onCancel={() => setDeleting(null)}
++        />
++      )}
++
+       {creating && (
+         <UserFormModal
+           onClose={() => setCreating(false)}
+@@ -459,18 +496,28 @@ function SystemConfigTab({ onNotice }) {
+ 
+ /* ---------- 3. Menu Management ---------- */
+ function MenuAdminTab({ onNotice }) {
+-  const { items, usableStockByItem } = useInventory();
++  const { items, usableStockByItem, setMenuEnabled } = useInventory();
+   const [search, setSearch] = useState('');
+   const [typeFilter, setTypeFilter] = useState('all');
++  const [statusFilter, setStatusFilter] = useState('all');
++  const [busyId, setBusyId] = useState(null);
+   const [modal, setModal] = useState(null);
+ 
+   const menuRows = items.filter((i) => {
+     if (i.type === 'ingredient') return false;
+     if (typeFilter !== 'all' && i.type !== typeFilter) return false;
++    if (statusFilter === 'enabled' && i.isEnabled === false) return false;
++    if (statusFilter === 'disabled' && i.isEnabled !== false) return false;
+     if (search.trim() && !i.name.toLowerCase().includes(search.trim().toLowerCase())) return false;
+     return true;
+   });
+ 
++  const toggleEnabled = async (i) => {
++    setBusyId(i.id);
++    onNotice(await setMenuEnabled(i.id, i.isEnabled === false));
++    setBusyId(null);
++  };
++
+   return (
+     <div>
+       <div className="section-head" style={{ marginTop: 8 }}>
+@@ -492,6 +539,11 @@ function MenuAdminTab({ onNotice }) {
+           <option value="food">Foods (Servings)</option>
+           <option value="food_tray">Food Trays</option>
+         </select>
++        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter menu status">
++          <option value="all">Enabled and disabled</option>
++          <option value="enabled">Enabled only</option>
++          <option value="disabled">Disabled only</option>
++        </select>
+       </div>
+ 
+       <div className="table-wrap">
+@@ -504,15 +556,16 @@ function MenuAdminTab({ onNotice }) {
+               <th className="num">Selling Price</th>
+               <th className="num">Low-Stock Level</th>
+               <th className="num">Usable Today</th>
++              <th>Status</th>
+               <th>Actions</th>
+             </tr>
+           </thead>
+           <tbody>
+             {menuRows.length === 0 && (
+-              <tr><td colSpan="7" className="empty">No menu items match your filter.</td></tr>
++              <tr><td colSpan="8" className="empty">No menu items match your filter.</td></tr>
+             )}
+             {menuRows.map((i) => (
+-              <tr key={i.id}>
++              <tr key={i.id} style={i.isEnabled === false ? { opacity: 0.6 } : undefined}>
+                 <td><strong>{i.name}</strong></td>
+                 <td>{i.type === 'food_tray' ? 'Food tray' : 'Food'}</td>
+                 <td>{i.category}</td>
+@@ -520,13 +573,28 @@ function MenuAdminTab({ onNotice }) {
+                 <td className="num">{i.minLevel} {i.unit}</td>
+                 <td className="num">{usableStockByItem[i.id] || 0} {i.unit}</td>
+                 <td>
+-                  <button
+-                    type="button"
+-                    className="btn btn-secondary btn-sm"
+-                    onClick={() => setModal({ kind: 'edit', item: i })}
+-                  >
+-                    Edit Price / Threshold
+-                  </button>
++                  <StatusBadge tone={i.isEnabled === false ? 'danger' : 'ok'}>
++                    {i.isEnabled === false ? 'Disabled' : 'Enabled'}
++                  </StatusBadge>
++                </td>
++                <td>
++                  <div className="actions">
++                    <button
++                      type="button"
++                      className="btn btn-secondary btn-sm"
++                      onClick={() => setModal({ kind: 'edit', item: i })}
++                    >
++                      Edit Price / Threshold
++                    </button>
++                    <button
++                      type="button"
++                      className="btn btn-secondary btn-sm"
++                      disabled={busyId === i.id}
++                      onClick={() => toggleEnabled(i)}
++                    >
++                      {i.isEnabled === false ? 'Enable' : 'Disable'}
++                    </button>
++                  </div>
+                 </td>
+               </tr>
+             ))}
+diff --git a/frontend/src/pages/inventory/MenuStock.jsx b/frontend/src/pages/inventory/MenuStock.jsx
+index d7be841..c656c71 100644
+--- a/frontend/src/pages/inventory/MenuStock.jsx
++++ b/frontend/src/pages/inventory/MenuStock.jsx
+@@ -44,7 +44,10 @@ function MenuTable({ title, nameLabel, qtyLabel, showCategory, rows, available,
+               const left = expired[i.id] || 0;
+               return (
+                 <tr key={i.id}>
+-                  <td>{i.name}</td>
++                  <td>
++                    {i.name}
++                    {i.isEnabled === false && <> <StatusBadge tone="danger">Disabled</StatusBadge></>}
++                  </td>
+                   {showCategory && <td>{i.category}</td>}
+                   <td className="num">{formatMoney(i.price)}</td>
+                   <td className="num">{qty} {i.unit}</td>
+@@ -55,7 +58,14 @@ function MenuTable({ title, nameLabel, qtyLabel, showCategory, rows, available,
+                   </td>
+                   <td>
+                     <div className="actions">
+-                      <button className="btn btn-secondary btn-sm" onClick={() => onAction('stockin', i)}> {i.type === 'food' ? 'Add' : 'Add trays'} </button>
++                      <button
++                        className="btn btn-secondary btn-sm"
++                        disabled={i.isEnabled === false}
++                        title={i.isEnabled === false ? 'Disabled by the owner. Enable it in Administration > Menu Management.' : undefined}
++                        onClick={() => onAction('stockin', i)}
++                      >
++                        Add trays
++                      </button>
+                       <button className="btn btn-secondary btn-sm" onClick={() => onAction('adjust', i)}>Adjust</button>
+                     </div>
+                   </td>
+@@ -108,8 +118,10 @@ export default function MenuStock() {
+         <button className="btn btn-primary" onClick={() => setModal({ kind: 'add' })}>+ Add menu item</button>
+       </div>
+       <p className="muted">
+-        Foods and trays are cooked fresh each day. Servings added today are available until the end of the day, then
+-        they expire. Each item sold at the cashier takes one serving or one tray from here.
++        Foods and trays are cooked fresh each day. Foods are added by the tray (1 tray = 10 servings), and adding
++        trays takes the dish's ingredients out of inventory, oldest batch first. Servings added today are available
++        until the end of the day, then they expire. Each item sold at the cashier takes one serving or one tray from
++        here.
+       </p>
+ 
+       {expiredItems > 0 && (

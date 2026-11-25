@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react';
 import { Users, Settings, UtensilsCrossed, ShieldCheck, Database, Plus, RefreshCw, Download } from 'lucide-react';
 import { api } from '../../api/client';
 import { useInventory } from '../../context/InventoryContext';
+import { useAuth } from '../../context/AuthContext';
 import { useOrders } from '../../context/OrderContext';
 import { SHOP } from '../../config/shop';
 import { ROLE_LABELS } from '../../routes/navItems';
 import StatusBadge from '../../components/StatusBadge';
 import Modal from '../../components/Modal';
+import ConfirmDialog from '../../components/ConfirmDialog';
 import AddMenuItemModal from '../../components/inventory/AddMenuItemModal';
 import EditMenuItemModal from '../../components/inventory/EditMenuItemModal';
 import { fmtDateTime } from '../../utils/dates';
@@ -62,6 +64,12 @@ function describeAudit(l) {
       return `Unlocked account "${d.username || ''}"`;
     case 'admin.user_signed_out':
       return `Signed out "${d.username || ''}" from all devices`;
+    case 'admin.user_deleted':
+      return `Deleted user "${d.username || ''}" (${d.role || 'staff'}). Their history was kept`;
+    case 'admin.menu_enabled':
+      return `Enabled "${d.name || 'menu item'}" on the menu`;
+    case 'admin.menu_disabled':
+      return `Disabled "${d.name || 'menu item'}" (hidden from POS and stock-in)`;
     case 'admin.shop_updated':
       return `Updated store configuration (${d.name || 'Mamitas’ Kitchen'})`;
     case 'admin.backup_created':
@@ -128,9 +136,11 @@ export default function Admin() {
 
 /* ---------- 1. User & Role Management ---------- */
 function UserManagementTab({ onNotice }) {
+  const { user: me } = useAuth();
   const [users, setUsers] = useState(FALLBACK_USERS);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [deleting, setDeleting] = useState(null);
 
   const loadUsers = () => {
     api.get('/admin/users')
@@ -160,6 +170,18 @@ function UserManagementTab({ onNotice }) {
       await api.post(`/admin/users/${u.id}/unlock`);
       loadUsers();
       onNotice({ ok: true, message: `Unlocked ${u.fullName}'s account.` });
+    } catch (err) {
+      onNotice({ ok: false, message: err.message });
+    }
+  };
+
+  const confirmDelete = async () => {
+    const u = deleting;
+    setDeleting(null);
+    try {
+      await api.delete(`/admin/users/${u.id}`);
+      loadUsers();
+      onNotice({ ok: true, message: `Deleted ${u.fullName}. Their past orders and records are kept.` });
     } catch (err) {
       onNotice({ ok: false, message: err.message });
     }
@@ -229,6 +251,11 @@ function UserManagementTab({ onNotice }) {
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => toggleActive(u)}>
                       {u.isActive ? 'Deactivate' : 'Activate'}
                     </button>
+                    {u.id !== me?.id && (
+                      <button type="button" className="btn btn-danger btn-sm" onClick={() => setDeleting(u)}>
+                        Delete
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -236,6 +263,16 @@ function UserManagementTab({ onNotice }) {
           </tbody>
         </table>
       </div>
+
+      {deleting && (
+        <ConfirmDialog
+          title="Delete this user?"
+          message={`Delete ${deleting.fullName} (${deleting.username})? They will no longer be able to sign in and will disappear from this list. Their past orders and records are kept. This cannot be undone here.`}
+          confirmLabel="Delete user"
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleting(null)}
+        />
+      )}
 
       {creating && (
         <UserFormModal
@@ -459,17 +496,27 @@ function SystemConfigTab({ onNotice }) {
 
 /* ---------- 3. Menu Management ---------- */
 function MenuAdminTab({ onNotice }) {
-  const { items, usableStockByItem } = useInventory();
+  const { items, usableStockByItem, setMenuEnabled } = useInventory();
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [busyId, setBusyId] = useState(null);
   const [modal, setModal] = useState(null);
 
   const menuRows = items.filter((i) => {
     if (i.type === 'ingredient') return false;
     if (typeFilter !== 'all' && i.type !== typeFilter) return false;
+    if (statusFilter === 'enabled' && i.isEnabled === false) return false;
+    if (statusFilter === 'disabled' && i.isEnabled !== false) return false;
     if (search.trim() && !i.name.toLowerCase().includes(search.trim().toLowerCase())) return false;
     return true;
   });
+
+  const toggleEnabled = async (i) => {
+    setBusyId(i.id);
+    onNotice(await setMenuEnabled(i.id, i.isEnabled === false));
+    setBusyId(null);
+  };
 
   return (
     <div>
@@ -492,6 +539,11 @@ function MenuAdminTab({ onNotice }) {
           <option value="food">Foods (Servings)</option>
           <option value="food_tray">Food Trays</option>
         </select>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter menu status">
+          <option value="all">Enabled and disabled</option>
+          <option value="enabled">Enabled only</option>
+          <option value="disabled">Disabled only</option>
+        </select>
       </div>
 
       <div className="table-wrap">
@@ -504,15 +556,16 @@ function MenuAdminTab({ onNotice }) {
               <th className="num">Selling Price</th>
               <th className="num">Low-Stock Level</th>
               <th className="num">Usable Today</th>
+              <th>Status</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {menuRows.length === 0 && (
-              <tr><td colSpan="7" className="empty">No menu items match your filter.</td></tr>
+              <tr><td colSpan="8" className="empty">No menu items match your filter.</td></tr>
             )}
             {menuRows.map((i) => (
-              <tr key={i.id}>
+              <tr key={i.id} style={i.isEnabled === false ? { opacity: 0.6 } : undefined}>
                 <td><strong>{i.name}</strong></td>
                 <td>{i.type === 'food_tray' ? 'Food tray' : 'Food'}</td>
                 <td>{i.category}</td>
@@ -520,13 +573,28 @@ function MenuAdminTab({ onNotice }) {
                 <td className="num">{i.minLevel} {i.unit}</td>
                 <td className="num">{usableStockByItem[i.id] || 0} {i.unit}</td>
                 <td>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => setModal({ kind: 'edit', item: i })}
-                  >
-                    Edit Price / Threshold
-                  </button>
+                  <StatusBadge tone={i.isEnabled === false ? 'danger' : 'ok'}>
+                    {i.isEnabled === false ? 'Disabled' : 'Enabled'}
+                  </StatusBadge>
+                </td>
+                <td>
+                  <div className="actions">
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setModal({ kind: 'edit', item: i })}
+                    >
+                      Edit Price / Threshold
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      disabled={busyId === i.id}
+                      onClick={() => toggleEnabled(i)}
+                    >
+                      {i.isEnabled === false ? 'Enable' : 'Disable'}
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
