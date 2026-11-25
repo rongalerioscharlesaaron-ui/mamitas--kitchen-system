@@ -63,6 +63,12 @@ export async function listCategories() {
 }
 
 export async function createItem(user, body) {
+  return withTransaction((db) => createItemTx(db, user, body));
+}
+
+// The body of createItem, running inside a transaction that the caller owns. This lets
+// createMenuItemWithRecipe create ingredients, the dish and its recipe in ONE all-or-nothing transaction.
+export async function createItemTx(db, user, body) {
   const b = body ?? {};
   const type = oneOf(b.type, 'Type', ['ingredient', 'food', 'food_tray']);
   const isIngredient = type === 'ingredient';
@@ -114,42 +120,140 @@ export async function createItem(user, body) {
   }
   if (expiry && expiry < todaySG()) throw badRequest('Expiry date cannot be in the past.');
 
-  return withTransaction(async (db) => {
-    const cat = await db.query('SELECT id FROM categories WHERE name = $1 AND kind = $2', [
-      categoryName,
-      type,
-    ]);
-    if (!cat.rows[0]) throw badRequest('Choose a valid category.');
+  const cat = await db.query('SELECT id FROM categories WHERE name = $1 AND kind = $2', [
+    categoryName,
+    type,
+  ]);
+  if (!cat.rows[0]) throw badRequest('Choose a valid category.');
 
-    const dup = await db.query('SELECT 1 FROM items WHERE lower(name) = lower($1)', [name]);
-    if (dup.rows[0]) throw conflict('An item with this name already exists.');
+  const dup = await db.query('SELECT 1 FROM items WHERE lower(name) = lower($1)', [name]);
+  if (dup.rows[0]) throw conflict('An item with this name already exists.');
 
-    const inserted = await db.query(
-      `INSERT INTO items (name, item_type, category_id, unit, min_level, has_expiry, price)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id`,
-      [name, type, cat.rows[0].id, unit, minLevel, hasExpiry, price]
-    );
-    const itemId = inserted.rows[0].id;
+  const inserted = await db.query(
+    `INSERT INTO items (name, item_type, category_id, unit, min_level, has_expiry, price)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id`,
+    [name, type, cat.rows[0].id, unit, minLevel, hasExpiry, price]
+  );
+  const itemId = inserted.rows[0].id;
 
-    let batch = null;
-    if (isFood && trays > 0) {
-      // A new dish has no recipe yet, so only its servings are added (nothing is taken from inventory)
-      const food = await addFoodTrays(db, {
-        itemId, trays, userId: user.id, reason: 'Initial stock',
+  let batch = null;
+  if (isFood && trays > 0) {
+    // Plain createItem has no recipe yet, so only the servings are added (nothing is taken from inventory).
+    // Use createMenuItemWithRecipe to add a dish with a recipe and cook it in one go.
+    const food = await addFoodTrays(db, {
+      itemId, trays, userId: user.id, reason: 'Initial stock',
+    });
+    batch = { id: food.batchId, code: food.batchCode };
+  } else if (qty > 0) {
+    batch = await insertBatch(db, {
+      itemId,
+      qty,
+      expiry: expiry ?? null,
+      userId: user.id,
+      reason: 'Initial stock',
+    });
+  }
+  return { itemId, batch };
+}
+
+// Add a new dish together with its recipe, all in one transaction:
+//   1. every recipe ingredient that is not in Inventory yet is added to it (with its starting stock, if given)
+//   2. the dish is created
+//   3. the recipe is saved
+//   4. if trays were entered, they are cooked through fn_add_menu_trays, so the recipe-based
+//      deduction runs exactly as it does for any other platter
+// If anything fails (for example an ingredient is short for the trays), NOTHING is saved.
+//
+// Body: { name, category, price, minLevel, trays?,
+//   ingredients: [{ name, qtyPerTray,
+//     // used only when the ingredient is not in Inventory yet:
+//     unit, category, minLevel, hasExpiry, qty, expiry }] }
+export async function createMenuItemWithRecipe(user, body) {
+  const b = body ?? {};
+  const lines = Array.isArray(b.ingredients) ? b.ingredients : [];
+  if (lines.length === 0) throw badRequest('Add at least one ingredient to the recipe.');
+  if (lines.length > 50) throw badRequest('A recipe can have at most 50 ingredients.');
+
+  const trays =
+    number(b.trays, 'Trays cooked today', {
+      min: 0,
+      max: MAX_TRAYS,
+      integer: true,
+      allowEmpty: true,
+    }) ?? 0;
+
+  const done = await withTransaction(async (db) => {
+    const recipe = [];
+    const createdIngredients = [];
+    const seen = new Set();
+
+    for (const raw of lines) {
+      const l = raw ?? {};
+      const name = text(l.name, 'Ingredient name', { max: 100 });
+      const qtyPerTray = number(l.qtyPerTray, `Quantity per tray of ${name}`, {
+        min: 0.001,
+        max: 1000000,
+        decimals: 3,
       });
-      batch = { id: food.batchId, code: food.batchCode };
-    } else if (qty > 0) {
-      batch = await insertBatch(db, {
-        itemId,
-        qty,
-        expiry: expiry ?? null,
-        userId: user.id,
-        reason: 'Initial stock',
-      });
+
+      const found = await db.query(
+        'SELECT id, name, item_type, unit, is_active FROM items WHERE lower(name) = lower($1)',
+        [name]
+      );
+      let ing = found.rows[0];
+
+      if (ing) {
+        if (ing.item_type !== 'ingredient') {
+          throw conflict(`"${ing.name}" is already a menu item, so it cannot be used as an ingredient.`);
+        }
+        if (!ing.is_active) throw conflict(`"${ing.name}" is no longer active in Inventory.`);
+      } else {
+        // Not in Inventory yet: add it now (createItemTx checks unit, category, expiry and so on)
+        const { itemId } = await createItemTx(db, user, {
+          type: 'ingredient',
+          name,
+          unit: l.unit,
+          category: l.category,
+          minLevel: l.minLevel,
+          hasExpiry: l.hasExpiry === true,
+          qty: l.qty,
+          expiry: l.expiry,
+        });
+        const made = await db.query('SELECT id, name, unit FROM items WHERE id = $1', [itemId]);
+        ing = made.rows[0];
+        createdIngredients.push(ing.name);
+      }
+
+      if (seen.has(ing.id)) throw badRequest(`${ing.name} is listed twice in the recipe.`);
+      seen.add(ing.id);
+      recipe.push({ id: ing.id, name: ing.name, unit: ing.unit, qtyPerTray });
     }
-    return { itemId, batch };
+
+    // The dish itself, with no trays yet: the recipe has to exist before anything is cooked
+    const { itemId } = await createItemTx(db, user, {
+      type: 'food',
+      name: b.name,
+      category: b.category,
+      price: b.price,
+      minLevel: b.minLevel,
+    });
+
+    for (const r of recipe) {
+      await db.query(
+        `INSERT INTO recipe_ingredients (menu_item_id, ingredient_item_id, qty_per_tray)
+         VALUES ($1, $2, $3)`,
+        [itemId, r.id, r.qtyPerTray]
+      );
+    }
+
+    // Cooking the first trays runs the normal recipe-based deduction
+    const cooked = trays > 0 ? await addFoodTrays(db, { itemId, trays, userId: user.id }) : null;
+
+    return { itemId, recipe, createdIngredients, cooked };
   });
+
+  return { ...done, item: await getItem(done.itemId) };
 }
 
 // Kitchen and owner can change the low-stock level. Only the owner can change a price.
