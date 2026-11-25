@@ -159,6 +159,38 @@ export function InventoryProvider({ children }) {
       return `${name.trim()} was added.`;
     });
 
+  // Add a new food together with its recipe, in one all-or-nothing request.
+  // Each ingredient line is { name, qtyPerTray } for one already in Inventory, or also
+  // { unit, category, minLevel, hasExpiry, qty, expiry } for a new one (it is added to Inventory).
+  // If trays are given, they are cooked now, so the recipe's ingredients are deducted.
+  const addMenuItemWithRecipe = ({ name, category, price, minLevel, trays, ingredients }) =>
+    run(async () => {
+      const clean = name.trim();
+      const r = await api.post('/items/with-recipe', {
+        name: clean,
+        category,
+        price,
+        minLevel,
+        trays: trays === '' ? undefined : trays,
+        ingredients: ingredients.map((l) => ({
+          ...l,
+          name: l.name.trim(),
+          qty: l.qty === '' ? undefined : l.qty,
+          expiry: l.expiry || undefined,
+        })),
+      });
+
+      const count = r.recipe.length;
+      let msg = `${clean} was added with a recipe of ${count} ${count === 1 ? 'ingredient' : 'ingredients'}.`;
+      if (r.createdIngredients?.length) {
+        msg += ` Added to Inventory: ${r.createdIngredients.join(', ')}.`;
+      }
+      if (r.trays) {
+        msg += ` ${foodAddedMessage({ name: clean }, { ...r, hasRecipe: true })}`;
+      }
+      return msg;
+    });
+
   // Only fields that are given are sent. Only the owner can change a price.
   const updateMenuItem = (itemId, { price, minLevel }) => {
     const item = itemMap[itemId];
@@ -271,7 +303,8 @@ export function InventoryProvider({ children }) {
       value={{
         items, batches, movements, stockByItem, usableStockByItem, itemMap, batchMap,
         ready, error, refresh,
-        addIngredient, addItem, updateMenuItem, setMenuEnabled, addStock, recordLoss, recordMenuLoss,
+        addIngredient, addItem, addMenuItemWithRecipe, updateMenuItem, setMenuEnabled, addStock,
+        recordLoss, recordMenuLoss,
         writeOffBatch, writeOffExpiredMenu, adjustBatch, adjustMenuStock, updateBatchExpiry,
       }}
     >

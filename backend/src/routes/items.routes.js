@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { oneOf } from '../utils/validate.js';
 import { audit } from '../utils/audit.js';
-import { listItems, getItem, createItem, updateItem } from '../services/itemService.js';
+import { listItems, getItem, createItem, createMenuItemWithRecipe, updateItem } from '../services/itemService.js';
 import { addBatch } from '../services/batchService.js';
 import {
   recordMenuLoss, adjustMenuStock, writeOffExpiredMenu,
@@ -108,6 +108,32 @@ router.post('/:id/adjust', ...staff, async (req, res) => {
     },
   });
   res.json({ result });
+});
+
+// A new dish with its recipe: missing ingredients are added to Inventory, and any trays entered
+// are cooked through the recipe-based deduction. All or nothing.
+router.post('/with-recipe', ...staff, async (req, res) => {
+  const result = await createMenuItemWithRecipe(req.user, req.body);
+  await audit({
+    ...who(req),
+    action: 'item.created_with_recipe',
+    entity: 'item',
+    entityId: result.item.id,
+    details: {
+      name: result.item.name,
+      recipe: result.recipe.map((r) => ({ name: r.name, qtyPerTray: r.qtyPerTray, unit: r.unit })),
+      newIngredients: result.createdIngredients,
+      ...(result.cooked ? { trays: result.cooked.trays, ingredientsUsed: result.cooked.used } : {}),
+    },
+  });
+  res.status(201).json({
+    item: result.item,
+    recipe: result.recipe,
+    createdIngredients: result.createdIngredients,
+    ...(result.cooked
+      ? { trays: result.cooked.trays, servings: result.cooked.servings, used: result.cooked.used }
+      : {}),
+  });
 });
 
 export default router;
