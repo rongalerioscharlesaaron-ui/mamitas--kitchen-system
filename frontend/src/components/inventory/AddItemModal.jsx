@@ -80,7 +80,7 @@ export default function AddItemModal({ defaultName = '', onClose, onDone }) {
             <div className="field">
               <label htmlFor="ai-min">Low-stock level</label>
               <input id="ai-min" type="number" min="0" step="any" value={form.minLevel} onChange={set('minLevel')} />
-              <span className="hint">An alert shows when stock is at or below this number.</span>
+              <span className="hint">Alerts when stock is at or below this number.</span>
             </div>
             <div className="field">
               <label htmlFor="ai-exp-type">Expiry</label>
