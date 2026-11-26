@@ -66,7 +66,7 @@ function MenuTable({ title, nameLabel, qtyLabel, showCategory, rows, available, 
                         title={i.isEnabled === false ? 'Disabled by the owner. Enable it in Administration > Menu Management.' : undefined}
                         onClick={() => onAction('stockin', i)}
                       >
-                        Add trays
+                        Add platters
                       </button>
                       <button className="btn btn-secondary btn-sm" onClick={() => onAction('adjust', i)}>Adjust</button>
                     </div>
@@ -120,10 +120,8 @@ export default function MenuStock() {
         <button className="btn btn-primary" onClick={() => setModal({ kind: 'add' })}>+ Add menu item</button>
       </div>
       <p className="muted">
-        Dishes are cooked fresh each day. Foods are added by the tray (1 tray = 10 servings), and adding
-        trays takes the dish's ingredients out of inventory, oldest batch first. Servings added today are available
-        until the end of the day, then they expire. Each item sold at the cashier takes one serving from
-        here.
+        Dishes are cooked fresh each day. Foods are added by the platter (1 platter = 10 servings), and adding
+        platters takes the dish's ingredients out of inventory, oldest batch first. 
       </p>
 
       {expiredItems > 0 && (

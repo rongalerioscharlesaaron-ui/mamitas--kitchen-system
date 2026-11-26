@@ -71,15 +71,10 @@ export default function AddMenuItemModal({ onClose, onDone }) {
   return (
     <Modal title="Add menu item" onClose={onClose}>
       <form onSubmit={submit}>
-        <div className="info-box">
-          Foods and trays are cooked fresh for the day, so no expiry date is needed. Whatever is not sold expires at
-          the end of the day.
-        </div>
         <div className="field">
           <label htmlFor="mi-type">Type</label>
           <select id="mi-type" value={form.type} onChange={set('type')}>
             <option value="food">Food (sold per serving)</option>
-            <option value="food_tray">Food tray (sold per tray)</option>
           </select>
         </div>
         <div className="field">
@@ -103,12 +98,11 @@ export default function AddMenuItemModal({ onClose, onDone }) {
         <div className="field">
           <label htmlFor="mi-min">Low-stock level ({unit})</label>
           <input id="mi-min" type="number" min="0" step="1" value={form.minLevel} onChange={set('minLevel')} />
-          <span className="hint">An alert shows when available {unit} are at or below this number.</span>
         </div>
 
         {isFood && (
           <fieldset className="field">
-            <legend>Recipe: ingredients used by 1 tray (10 servings)</legend>
+            <legend>Recipe : ingredients for 1 platter (10 servings)</legend>
             <datalist id="recipe-ingredient-names">
               {ingredients.map((i) => (
                 <option key={i.id} value={i.name} />
@@ -131,7 +125,7 @@ export default function AddMenuItemModal({ onClose, onDone }) {
                   </div>
                   <div className="field">
                     <label htmlFor={`mi-qpt-${r.key}`}>
-                      Quantity per tray{existing ? ` (${existing.unit})` : r.unit ? ` (${r.unit})` : ''}
+                      Quantity per platter{existing ? ` (${existing.unit})` : r.unit ? ` (${r.unit})` : ''}
                     </label>
                     <input
                       id={`mi-qpt-${r.key}`} type="number" min="0" step="any"
@@ -195,7 +189,7 @@ export default function AddMenuItemModal({ onClose, onDone }) {
                       {trays > 0 && startQty < need && (
                         <p className="hint">
                           {trays} {trays === 1 ? 'tray needs' : 'trays need'} {need} of this, so enter at least
-                          that as the starting quantity or clear the trays below.
+                          that as the starting quantity or clear the platter below.
                         </p>
                       )}
                     </div>
@@ -217,14 +211,8 @@ export default function AddMenuItemModal({ onClose, onDone }) {
         )}
 
         <div className="field">
-          <label htmlFor="mi-qty">Trays cooked today (optional)</label>
+          <label htmlFor="mi-qty">Platters cooked today (optional)</label>
           <input id="mi-qty" type="number" min="0" step="1" value={form.qty} onChange={set('qty')} />
-          {isFood && (
-            <span className="hint">
-              1 tray = 10 servings. The ingredients in the recipe above are deducted from Inventory for these trays.
-              If any ingredient is short, nothing is saved.
-            </span>
-          )}
         </div>
         {error && <p className="error" role="alert">{error}</p>}
         <div className="form-actions">
